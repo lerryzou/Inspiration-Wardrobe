@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, Plus, Shirt, Wand2, Trash2, X, RefreshCw, UploadCloud, ChevronRight, MessageCircle, ChevronLeft, Download, Share, RotateCcw } from 'lucide-react';
+import { Camera, Plus, Shirt, Wand2, Trash2, X, RefreshCw, UploadCloud, ChevronRight, MessageCircle, ChevronLeft, Download, Share, RotateCcw, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { get, set } from 'idb-keyval';
-import { Category, WardrobeItem, OutfitRecommendation } from './types';
+import { Category, WardrobeItem, OutfitRecommendation, HistoryOutfit } from './types';
 import { analyzeSingleClothingItem, generateOutfit, enhanceClothingImage, generateVirtualTryOn, processSingleItemImage } from './services/ai';
 import { compressImage, cropImage } from './lib/imageUtils';
 
@@ -51,9 +51,10 @@ function useIDBStorage<T>(key: string, initialValue: T): [T, (value: T | ((val: 
 
 // --- Main App Component ---
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'wardrobe' | 'add' | 'inspiration'>('inspiration');
-  const [previousTab, setPreviousTab] = useState<'wardrobe' | 'inspiration'>('inspiration');
+  const [activeTab, setActiveTab] = useState<'wardrobe' | 'add' | 'inspiration' | 'history'>('inspiration');
+  const [previousTab, setPreviousTab] = useState<'wardrobe' | 'inspiration' | 'history'>('inspiration');
   const [wardrobe, setWardrobe, isLoaded] = useIDBStorage<WardrobeItem[]>('linggan_wardrobe', []);
+  const [history, setHistory] = useIDBStorage<HistoryOutfit[]>('linggan_history', []);
   
   const addToWardrobe = (items: WardrobeItem | WardrobeItem[]) => {
     const itemsToAdd = Array.isArray(items) ? items : [items];
@@ -79,6 +80,10 @@ export default function App() {
     );
   }
 
+  const handleSaveToHistory = (outfit: HistoryOutfit) => {
+    setHistory(prev => [outfit, ...prev]);
+  };
+
   return (
     <div className="max-w-md mx-auto h-[100dvh] overflow-hidden bg-surface flex flex-col relative sm:border sm:border-border-custom mt-0 sm:mt-8 sm:h-[90vh]">
       {/* Main Content Area */}
@@ -91,7 +96,10 @@ export default function App() {
             <AddTab key="add" onAdd={addToWardrobe} onCancel={() => setActiveTab(previousTab)} />
           )}
           {activeTab === 'inspiration' && (
-            <InspirationTab key="inspiration" wardrobe={wardrobe} onNavAdd={() => goToAdd('inspiration')} onNavWardrobe={() => setActiveTab('wardrobe')} />
+            <InspirationTab key="inspiration" wardrobe={wardrobe} onNavAdd={() => goToAdd('inspiration')} onNavWardrobe={() => setActiveTab('wardrobe')} onNavHistory={() => setActiveTab('history')} historyCount={history.length} onSaveHistory={handleSaveToHistory} />
+          )}
+          {activeTab === 'history' && (
+            <HistoryTab key="history" history={history} onBack={() => setActiveTab('inspiration')} />
           )}
         </AnimatePresence>
       </main>
@@ -144,8 +152,11 @@ function WardrobeTab({ wardrobe, onRemove, onBack, onNavAdd }: { key?: string, w
           <ChevronLeft className="w-5 h-5"/>
         </button>
         <h2 className="text-lg font-normal tracking-tight text-primary">我的衣柜</h2>
-        <button onClick={onNavAdd} className="text-[#999] hover:text-primary p-1.5 -mr-1.5 rounded-full hover:bg-black/5 transition-colors">
-          <Plus className="w-5 h-5" />
+        <button 
+          onClick={onNavAdd} 
+          className="w-8 h-8 bg-[#222] text-white shadow-md rounded-full flex items-center justify-center hover:bg-black transition-all hover:scale-105 border border-white/20"
+        >
+          <Plus className="w-5 h-5 stroke-[2]" />
         </button>
       </div>
 
@@ -155,17 +166,20 @@ function WardrobeTab({ wardrobe, onRemove, onBack, onNavAdd }: { key?: string, w
           onClick={() => setFilter('全部')}
           className={`shrink-0 px-3 py-1 rounded-[20px] text-[12px] transition-colors ${filter === '全部' ? 'bg-accent text-white' : 'bg-accent-light text-primary'}`}
         >
-          全部
+          {filter === '全部' ? `全部 ${wardrobe.length}` : '全部'}
         </button>
-        {categories.map(c => (
-          <button
-            key={c}
-            onClick={() => setFilter(c)}
-            className={`shrink-0 px-3 py-1 rounded-[20px] text-[12px] transition-colors ${filter === c ? 'bg-accent text-white' : 'bg-accent-light text-primary'}`}
-          >
-            {c}
-          </button>
-        ))}
+        {categories.map(c => {
+          const count = wardrobe.filter(item => item.category === c).length;
+          return (
+            <button
+              key={c}
+              onClick={() => setFilter(c)}
+              className={`shrink-0 px-3 py-1 rounded-[20px] text-[12px] transition-colors ${filter === c ? 'bg-accent text-white' : 'bg-accent-light text-primary'}`}
+            >
+              {filter === c ? `${c} ${count}` : c}
+            </button>
+          );
+        })}
       </div>
 
       {wardrobe.length === 0 ? (
@@ -490,9 +504,83 @@ function AddTab({ onAdd, onCancel }: { key?: string, onAdd: (items: WardrobeItem
 }
 
 // --- Inspiration Tab ---
-function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe }: { key?: string, wardrobe: WardrobeItem[], onNavAdd: () => void, onNavWardrobe: () => void }) {
-  const [scenario, setScenario] = useState('日常通勤上课');
-  const [weather, setWeather] = useState('晴，18～25 度');
+function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, historyCount, onSaveHistory }: { key?: string, wardrobe: WardrobeItem[], onNavAdd: () => void, onNavWardrobe: () => void, onNavHistory: () => void, historyCount: number, onSaveHistory: (outfit: HistoryOutfit) => void }) {
+  const DEFAULT_SCENARIOS = ['日常通勤上课', '与闺蜜一起逛街', '去郊区远足'];
+  const [scenario, setScenario] = useState(() => {
+    const saved = localStorage.getItem('wardrobe_scenario_current');
+    return saved || '日常通勤上课';
+  });
+  
+  const [historyScenarios, setHistoryScenarios] = useState<string[]>(() => {
+    const saved = localStorage.getItem('wardrobe_scenario_history');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) {}
+    }
+    return DEFAULT_SCENARIOS;
+  });
+  const [showScenarioDropdown, setShowScenarioDropdown] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowScenarioDropdown(false);
+      }
+    };
+    if (showScenarioDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showScenarioDropdown]);
+
+  const saveScenarioToHistory = (newScenario: string) => {
+    if (!newScenario.trim()) return;
+    setHistoryScenarios(prev => {
+      const updated = [newScenario, ...prev.filter(s => s !== newScenario)].slice(0, 10);
+      localStorage.setItem('wardrobe_scenario_history', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const handleScenarioChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setScenario(e.target.value);
+    localStorage.setItem('wardrobe_scenario_current', e.target.value);
+  };
+
+  const handleScenarioBlur = () => {
+    // Delay to allow dropdown click to register
+    setTimeout(() => {
+      saveScenarioToHistory(scenario);
+    }, 200);
+  };
+
+  const handleDeleteScenario = (e: React.MouseEvent, s: string) => {
+    e.stopPropagation();
+    setHistoryScenarios(prev => {
+      const updated = prev.filter(item => item !== s);
+      localStorage.setItem('wardrobe_scenario_history', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const handleSelectScenario = (s: string) => {
+    setScenario(s);
+    localStorage.setItem('wardrobe_scenario_current', s);
+    saveScenarioToHistory(s);
+    setShowScenarioDropdown(false);
+  };
+  
+  const [weather, setWeather] = useState(() => {
+    const saved = localStorage.getItem('wardrobe_weather_data');
+    if (saved) {
+      try { return JSON.parse(saved).weatherString || '☀︎晴，18℃'; } catch (e) {}
+    }
+    return '☀︎晴，18℃';
+  });
+  const [isWeatherUpdating, setIsWeatherUpdating] = useState(false);
+
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCanceled, setIsCanceled] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -502,6 +590,111 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe }: { key?: string, w
 
   const [tryOnImage, setTryOnImage] = useState<string | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+  const [isSaved, setIsSaved] = useState(false);
+  const [plusOneAnim, setPlusOneAnim] = useState(0);
+
+  useEffect(() => {
+    const checkAndFetchWeather = async () => {
+      const saved = localStorage.getItem('wardrobe_weather_data');
+      let needsUpdate = true;
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Date.now() - parsed.lastUpdated < 8 * 60 * 60 * 1000) {
+            needsUpdate = false;
+          }
+        } catch(e) {}
+      }
+      
+      if (needsUpdate) {
+        handleSyncWeather();
+      }
+    };
+    
+    checkAndFetchWeather();
+  }, []);
+
+  const fetchWeather = async (): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        if (!navigator.geolocation) return reject(new Error('no_geolocation'));
+        navigator.geolocation.getCurrentPosition(async (pos) => {
+            const { latitude, longitude } = pos.coords;
+            try {
+                const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`);
+                if (!res.ok) throw new Error('network_error');
+                const data = await res.json();
+                const t = Math.round(data.current_weather.temperature);
+                const code = data.current_weather.weathercode;
+                let desc = "☀︎晴";
+                if (code === 1 || code === 2) desc = "⛅多云";
+                else if (code === 3) desc = "☁️阴";
+                else if (code >= 45 && code <= 48) desc = "🌫️雾";
+                else if (code >= 51 && code <= 69) desc = "🌧️雨";
+                else if (code >= 71 && code <= 79) desc = "❄️雪";
+                else if (code >= 80 && code <= 99) desc = "⛈️雷阵雨";
+                
+                resolve(`${desc}，${t}℃`);
+            } catch (e) {
+                reject(e);
+            }
+        }, (err) => {
+            // Geolocation permissions denied or timeout
+            reject(err);
+        }, { timeout: 10000 });
+    });
+  };
+
+  const handleSyncWeather = async () => {
+    if (isWeatherUpdating) return;
+    setIsWeatherUpdating(true);
+    try {
+        const weatherStr = await fetchWeather();
+        setWeather(weatherStr);
+        localStorage.setItem('wardrobe_weather_data', JSON.stringify({
+            weatherString: weatherStr,
+            lastUpdated: Date.now()
+        }));
+    } catch (err: any) {
+        console.warn("Failed to get geolocation or weather", err);
+        // Show the error on screen to let the user know what happened
+        if (err.message === 'no_geolocation' || err.code === 1) { // 1 is PERMISSION_DENIED
+           setError("获取位置权限被拒绝，请在浏览器或设备中允许定位权限以同步天气。");
+        } else {
+           setError("天气同步失败，请检查网络或稍后手动修改。");
+        }
+    } finally {
+        setIsWeatherUpdating(false);
+    }
+  };
+
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showActionSheet, setShowActionSheet] = useState(false);
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const startPress = () => {
+    if (!isFullscreen) return;
+    pressTimer.current = setTimeout(() => {
+      setShowActionSheet(true);
+    }, 600);
+  };
+
+  const cancelPress = () => {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  };
+
+  const handleImageClick = () => {
+    // Treat long-press trigger cancellation slightly differently:
+    // If action sheet is up, just close it, don't toggle fullscreen
+    if (showActionSheet) {
+      setShowActionSheet(false);
+      return;
+    }
+    // Only toggle fullscreen if we weren't long-pressing
+    setIsFullscreen(!isFullscreen);
+  };
 
   const getBase64FromImage = (imgEl: HTMLImageElement): string | null => {
     try {
@@ -523,10 +716,26 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe }: { key?: string, w
     setTryOnImage(null);
     setShowReason(false);
     setError(null);
+    setIsSaved(false);
   };
 
-  const handleDownload = () => {
-    if (!tryOnImage) return;
+  const handleSave = () => {
+    if (!tryOnImage || isSaved) return;
+    
+    // Save to History (IDB)
+    onSaveHistory({
+        id: Date.now().toString(),
+        imageUrl: tryOnImage,
+        scenario,
+        weather,
+        createdAt: Date.now()
+    });
+    
+    // Trigger animation & toggle 
+    setIsSaved(true);
+    setPlusOneAnim(prev => prev + 1);
+
+    // Save to local device album / download
     const a = document.createElement("a");
     a.href = tryOnImage;
     a.download = "灵感穿搭.jpg";
@@ -622,7 +831,15 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe }: { key?: string, w
         ref={imgRef}
         src={tryOnImage || "/model_uploaded.jpg"}
         alt="Asian Girl Display Model"
-        className="absolute inset-0 w-full h-full object-cover transition-all duration-700 z-0"
+        onClick={handleImageClick}
+        onPointerDown={startPress}
+        onPointerUp={cancelPress}
+        onPointerMove={cancelPress}
+        onPointerCancel={cancelPress}
+        onContextMenu={(e) => {
+          if (isFullscreen) e.preventDefault(); // Prevent default mobile save dialog to use our action sheet
+        }}
+        className={`absolute inset-0 w-full h-full object-cover transition-all duration-700 ${isFullscreen ? 'z-50' : 'z-0'}`}
         crossOrigin="anonymous"
         onError={(e) => {
           if (!tryOnImage) {
@@ -631,31 +848,118 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe }: { key?: string, w
         }}
       />
       
+      {/* Action Sheet for Fullscreen Long Press */}
+      <AnimatePresence>
+        {showActionSheet && isFullscreen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowActionSheet(false)}
+            className="absolute inset-0 z-[60] bg-black/50 backdrop-blur-sm flex flex-col justify-end p-4"
+          >
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+              className="bg-white rounded-2xl overflow-hidden flex flex-col mb-4 pt-1"
+            >
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSave();
+                  setShowActionSheet(false);
+                }}
+                className="w-full py-4 px-6 text-[15px] font-medium text-[#222] border-b border-[#eee] active:bg-[#f5f5f5] transition-colors"
+              >
+                保存到相册
+              </button>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowActionSheet(false);
+                }}
+                className="w-full py-4 px-6 text-[15px] font-medium text-[#999] active:bg-[#f5f5f5] transition-colors"
+              >
+                取消
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Optional Top Gradient for better text readability */}
-      <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/10 to-transparent z-0 pointer-events-none" />
+      <div className={`absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/10 to-transparent z-0 pointer-events-none transition-opacity duration-300 ${isFullscreen ? 'opacity-0' : 'opacity-100'}`} />
 
       {/* Floating Content wrapper */}
-      <div className="relative z-10 flex flex-col h-full">
+      <div className={`relative z-10 flex flex-col h-full pointer-events-none transition-opacity duration-300 ${isFullscreen ? 'opacity-0' : 'opacity-100'}`}>
 
         {/* Top: Inputs floating over image */}
         <div className="flex space-x-3 px-6 pt-6 shrink-0 z-20 pointer-events-none">
-          <div className="flex-1 pointer-events-auto">
+          <div className="flex-1 pointer-events-auto relative" ref={dropdownRef}>
             <input 
               type="text" 
               value={scenario}
-              onChange={(e) => setScenario(e.target.value)}
+              onChange={handleScenarioChange}
+              onBlur={handleScenarioBlur}
               placeholder="场景：日常通勤上课"
-              className="w-full bg-white/20 backdrop-blur-[6px] border border-white/40 text-center py-2 px-3 rounded-full text-xs text-[#222] font-medium shadow-[0_4px_15px_rgba(0,0,0,0.08)] focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-[#555] transition-all focus:bg-white/40 hover:bg-white/30"
+              className="w-full bg-white/20 backdrop-blur-[6px] border border-white/40 text-center py-2 pl-3 pr-8 rounded-full text-xs text-[#222] font-medium shadow-[0_4px_15px_rgba(0,0,0,0.08)] focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-[#555] transition-all focus:bg-white/40 hover:bg-white/30"
             />
+            <button 
+              onClick={() => setShowScenarioDropdown(!showScenarioDropdown)}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 text-[#555] hover:text-[#222] transition-colors rounded-full hover:bg-black/5"
+            >
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showScenarioDropdown ? 'rotate-180' : ''}`} />
+            </button>
+            <AnimatePresence>
+              {showScenarioDropdown && historyScenarios.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="absolute top-full left-0 right-0 mt-2 bg-white/95 backdrop-blur-xl border border-white/40 shadow-[0_10px_30px_rgba(0,0,0,0.15)] rounded-2xl overflow-hidden z-50 py-1.5 max-h-48 overflow-y-auto custom-scrollbar"
+                >
+                  {historyScenarios.map(s => (
+                    <div 
+                      key={s} 
+                      onClick={() => handleSelectScenario(s)}
+                      className="px-4 py-2.5 text-xs text-[#333] hover:bg-black/5 cursor-pointer flex justify-between items-center transition-colors border-b border-black/5 last:border-0"
+                    >
+                      <span className="truncate pr-2">{s}</span>
+                      <button 
+                        onClick={(e) => handleDeleteScenario(e, s)}
+                        className="p-1 hover:bg-red-50 text-[#999] hover:text-red-500 rounded-full transition-colors flex-shrink-0"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-          <div className="flex-1 pointer-events-auto">
+          <div className="flex-1 pointer-events-auto relative">
             <input 
               type="text" 
               value={weather}
-              onChange={(e) => setWeather(e.target.value)}
-              placeholder="天气：晴，18～25度"
-              className="w-full bg-white/20 backdrop-blur-[6px] border border-white/40 text-center py-2 px-3 rounded-full text-xs text-[#222] font-medium shadow-[0_4px_15px_rgba(0,0,0,0.08)] focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-[#555] transition-all focus:bg-white/40 hover:bg-white/30"
+              onChange={(e) => {
+                setWeather(e.target.value);
+                localStorage.setItem('wardrobe_weather_data', JSON.stringify({
+                    weatherString: e.target.value,
+                    lastUpdated: Date.now()
+                }));
+              }}
+              placeholder="天气：☀︎晴，18℃"
+              className="w-full bg-white/20 backdrop-blur-[6px] border border-white/40 text-center py-2 pl-3 pr-8 rounded-full text-xs text-[#222] font-medium shadow-[0_4px_15px_rgba(0,0,0,0.08)] focus:outline-none focus:ring-1 focus:ring-primary placeholder:text-[#555] transition-all focus:bg-white/40 hover:bg-white/30"
             />
+            <button 
+              onClick={handleSyncWeather}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 text-[#555] hover:text-[#222] transition-colors rounded-full hover:bg-black/5"
+              title="同城天气同步"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isWeatherUpdating ? 'animate-spin text-primary' : ''}`} />
+            </button>
           </div>
         </div>
 
@@ -669,7 +973,7 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe }: { key?: string, w
         <div className="flex-1 relative" />
 
         {isGenerating && (
-          <div className="absolute inset-0 bg-white/20 backdrop-blur-[2px] z-20 flex flex-col items-center justify-center gap-3">
+          <div className="absolute inset-0 bg-white/20 backdrop-blur-[2px] z-30 flex flex-col items-center justify-center gap-3">
             <RefreshCw className="w-8 h-8 text-primary animate-spin drop-shadow-md" />
             <p className="text-sm font-medium text-primary tracking-widest uppercase drop-shadow-md">
               {result ? '正在生成试穿效果图...' : '寻找穿搭灵感中...'}
@@ -689,7 +993,7 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe }: { key?: string, w
                   initial={{ opacity: 0, scale: 0.9, y: 10 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.9, y: 10 }}
-                  className="absolute top-[12%] left-6 right-6 bg-white/95 backdrop-blur-md p-6 rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.12)] border border-white pointer-events-auto z-30"
+                  className="absolute top-[12%] left-6 right-6 bg-white/60 backdrop-blur-xl p-6 rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.12)] border border-white/40 pointer-events-auto z-30"
                 >
                   <button 
                     onClick={() => setShowReason(false)}
@@ -709,7 +1013,7 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe }: { key?: string, w
                 >
                   <button
                     onClick={() => setShowReason(true)}
-                    className="relative bg-white/95 backdrop-blur shadow-[0_4px_20px_rgba(0,0,0,0.15)] p-3 rounded-full text-primary hover:bg-white transition-all hover:scale-110"
+                    className="relative bg-white/60 backdrop-blur-xl shadow-[0_4px_20px_rgba(0,0,0,0.15)] p-3 rounded-full text-primary border border-white/40 hover:bg-white/80 transition-all hover:scale-110"
                     aria-label="查看穿搭理由"
                   >
                     <MessageCircle className="w-5 h-5 stroke-[1.5]" />
@@ -726,16 +1030,43 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe }: { key?: string, w
 
         {/* Floating Nav Buttons on the Right */}
         <div className="absolute right-6 top-1/2 -translate-y-1/2 flex flex-col gap-5 z-20 pointer-events-none">
-          <button onClick={onNavWardrobe} className="w-12 h-12 bg-white/70 backdrop-blur-md shadow-[0_4px_20px_rgba(0,0,0,0.15)] rounded-full flex items-center justify-center text-primary hover:bg-white/90 transition-all hover:scale-105 pointer-events-auto border border-white/30" title="我的衣柜">
-            <Shirt className="w-5 h-5 stroke-[1.5]" />
+          <div className="relative flex flex-col items-center pointer-events-auto">
+            <AnimatePresence>
+                {plusOneAnim > 0 && (
+                <motion.div
+                    key={plusOneAnim}
+                    initial={{ opacity: 0, y: -20, scale: 0.8 }}
+                    animate={{ opacity: [0, 1, 0], y: [-20, 0, 15], scale: [0.8, 1.2, 1] }}
+                    transition={{ duration: 1, ease: "easeOut" }}
+                    className="absolute -top-6 text-accent font-black text-sm drop-shadow-md z-30"
+                >
+                    +1
+                </motion.div>
+                )}
+            </AnimatePresence>
+            <motion.button 
+              disabled={isGenerating} 
+              onClick={onNavHistory} 
+              animate={plusOneAnim > 0 ? { scale: [1, 1.2, 1] } : {}}
+              transition={{ duration: 0.4 }}
+              className="w-12 h-12 bg-white/70 backdrop-blur-md shadow-[0_4px_20px_rgba(0,0,0,0.15)] rounded-full flex flex-col items-center justify-center text-primary hover:bg-white/90 transition-all hover:scale-105 disabled:opacity-50 border border-white/30" 
+              title="历史穿搭"
+            >
+              <Download className="w-[18px] h-[18px] stroke-[1.5] -mt-0.5" />
+              <span className="text-[9px] text-[#555] font-normal leading-none mt-1">{historyCount}</span>
+            </motion.button>
+          </div>
+          <button disabled={isGenerating} onClick={onNavWardrobe} className="w-12 h-12 bg-white/70 backdrop-blur-md shadow-[0_4px_20px_rgba(0,0,0,0.15)] rounded-full flex flex-col items-center justify-center text-primary hover:bg-white/90 transition-all hover:scale-105 disabled:opacity-50 pointer-events-auto border border-white/30" title="我的衣柜">
+            <Shirt className="w-[18px] h-[18px] stroke-[1.5] -mt-0.5" />
+            <span className="text-[9px] text-[#555] font-normal leading-none mt-1">{wardrobe.length}</span>
           </button>
-          <button onClick={onNavAdd} className="w-12 h-12 bg-black/70 backdrop-blur-md text-white shadow-[0_4px_20px_rgba(0,0,0,0.25)] rounded-full flex items-center justify-center hover:bg-black/90 transition-all hover:scale-105 pointer-events-auto border border-white/20" title="添加单品">
+          <button disabled={isGenerating} onClick={onNavAdd} className="w-12 h-12 bg-black/70 backdrop-blur-md text-white shadow-[0_4px_20px_rgba(0,0,0,0.25)] rounded-full flex items-center justify-center hover:bg-black/90 transition-all hover:scale-105 disabled:opacity-50 pointer-events-auto border border-white/20" title="添加单品">
             <Plus className="w-6 h-6 stroke-[2]" />
           </button>
         </div>
 
         {/* Generate Button floating at the bottom */}
-        <div className="shrink-0 mb-8 mt-2 flex flex-col items-center px-6 z-20 w-full">
+        <div className="shrink-0 mb-8 mt-2 flex flex-col items-center px-6 z-40 w-full pointer-events-none">
           {result && !isGenerating ? (
             <motion.div 
               initial={{ opacity: 0, y: 10 }}
@@ -744,12 +1075,13 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe }: { key?: string, w
             >
               <div className="flex flex-col items-center gap-1.5">
                 <button 
-                  onClick={handleDownload}
-                  className="w-14 h-14 bg-white/30 backdrop-blur-[6px] border border-white/50 text-[#222] rounded-full flex items-center justify-center hover:bg-white/50 transition-all hover:scale-105 shadow-[0_4px_15px_rgba(0,0,0,0.08)]"
+                  onClick={handleSave}
+                  disabled={isSaved}
+                  className={`w-14 h-14 backdrop-blur-[6px] border rounded-full flex items-center justify-center transition-all shadow-[0_4px_15px_rgba(0,0,0,0.08)] ${isSaved ? 'bg-black/10 border-white/20 text-[#888] cursor-not-allowed' : 'bg-white/30 border-white/50 text-[#222] hover:bg-white/50 hover:scale-105'}`}
                 >
                   <Download className="w-6 h-6 stroke-[1.5]" />
                 </button>
-                <span className="text-[12px] text-[#444] font-medium drop-shadow-lg">下载</span>
+                <span className={`text-[12px] font-medium drop-shadow-lg ${isSaved ? 'text-[#888]' : 'text-[#444]'}`}>{isSaved ? '已保存' : '保存'}</span>
               </div>
               <div className="flex flex-col items-center gap-1.5">
                 <button 
@@ -797,6 +1129,108 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe }: { key?: string, w
           )}
         </div>
 
+      </div>
+    </motion.div>
+  );
+}
+
+// --- History Tab ---
+function HistoryTab({ history, onBack }: { key?: string, history: HistoryOutfit[], onBack: () => void }) {
+  const [fullscreenIndex, setFullscreenIndex] = useState<number | null>(null);
+
+  const dragHandlers = {
+    onDragEnd: (e: any, { offset, velocity }: any) => {
+      const swipe = offset.x;
+      if (swipe < -50 && fullscreenIndex !== null && fullscreenIndex < history.length - 1) {
+        setFullscreenIndex(fullscreenIndex + 1);
+      } else if (swipe > 50 && fullscreenIndex !== null && fullscreenIndex > 0) {
+        setFullscreenIndex(fullscreenIndex - 1);
+      }
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, x: 20 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 20 }}
+      className="flex flex-col h-full bg-surface"
+    >
+      <AnimatePresence>
+        {fullscreenIndex !== null && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/95 flex flex-col pt-12"
+          >
+            {/* Overlay Status (Date, Scenario, Weather) - overlaying similar to Inspiration Tab */}
+            <div className="absolute top-12 left-0 right-0 z-50 pointer-events-none px-6">
+              <div className="text-white/80 text-sm font-medium drop-shadow-md text-center bg-black/30 backdrop-blur-sm rounded-full py-2 w-max mx-auto px-6 border border-white/10">
+                {new Date(history[fullscreenIndex].createdAt).toLocaleDateString()} · {history[fullscreenIndex].scenario}
+                <div className="text-xs text-white/60 mt-0.5">{history[fullscreenIndex].weather}</div>
+              </div>
+            </div>
+
+            <motion.img 
+              drag="x"
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={1}
+              {...dragHandlers}
+              key={fullscreenIndex}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              src={history[fullscreenIndex].imageUrl} 
+              alt="History Outfit Fullscreen" 
+              className="flex-1 w-full h-[80vh] object-contain cursor-pointer"
+              onClick={() => setFullscreenIndex(null)}
+            />
+            
+            <div className="pb-8 pt-4 text-center pointer-events-none shrink-0">
+               <p className="text-white/50 text-xs">滑动切换图片 / 点击关闭</p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex items-center justify-between mb-4 shrink-0">
+        <button onClick={onBack} className="text-[#999] hover:text-primary p-1.5 -ml-1.5 rounded-full hover:bg-black/5 transition-colors shrink-0">
+          <ChevronLeft className="w-5 h-5"/>
+        </button>
+        <h2 className="text-lg font-normal tracking-tight text-primary">历史穿搭</h2>
+        <div className="w-8 shrink-0" /> {/* Spacer */}
+      </div>
+
+      <div className="flex-1 overflow-y-auto pb-8 custom-scrollbar">
+        {history.length === 0 ? (
+            <div className="pt-20 flex flex-col items-center justify-center text-center px-6">
+              <div className="w-24 h-24 bg-accent-light rounded-full flex items-center justify-center mb-4">
+                <Download className="w-10 h-10 text-[#999]" />
+              </div>
+              <p className="text-sm text-[#999]">暂无历史保存穿搭<br/><span className="text-xs text-[#bbb] mt-1 block">在灵感界面点击保存即可收集</span></p>
+            </div>
+        ) : (
+            <div className="grid grid-cols-2 gap-3 pb-safe">
+              {history.map((item, index) => (
+                <div 
+                  key={item.id} 
+                  className="bg-white rounded-xl overflow-hidden flex flex-col shadow-[0_2px_10px_rgba(0,0,0,0.03)] border border-black/5 cursor-pointer hover:shadow-md transition-shadow"
+                  onClick={() => setFullscreenIndex(index)}
+                >
+                  <div className="aspect-[3/4] relative bg-gray-100 overflow-hidden">
+                    <img src={item.imageUrl} alt="Outfit" className="w-full h-full object-cover" />
+                  </div>
+                  <div className="p-3 flex flex-col gap-1">
+                    <div className="text-[10px] text-[#999]">{new Date(item.createdAt).toLocaleDateString()}</div>
+                    <div className="text-xs font-medium text-[#333] truncate">{item.scenario}</div>
+                    <div className="text-[10px] text-[#666] truncate">{item.weather}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+        )}
       </div>
     </motion.div>
   );

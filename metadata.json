@@ -2,7 +2,8 @@
   "name": "灵感衣柜 (Inspiration Wardrobe)",
   "description": "An AI-powered digital wardrobe app that identifies clothing from photos and generates outfit recommendations. Designed for fashion enthusiasts with a fresh and minimalist style.",
   "requestFramePermissions": [
-    "camera"
+    "camera",
+    "geolocation"
   ],
   "majorCapabilities": []
 }

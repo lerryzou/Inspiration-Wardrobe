@@ -10,6 +10,14 @@ export interface WardrobeItem {
   createdAt: number;
 }
 
+export interface HistoryOutfit {
+  id: string;
+  imageUrl: string;
+  scenario: string;
+  weather: string;
+  createdAt: number;
+}
+
 export interface OutfitRecommendation {
   id: string;
   title: string;
