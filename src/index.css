@@ -1,0 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+  --color-primary: #1A1A1A;
+  --color-surface: #F4F4F4;
+  --color-border-custom: #E5E5E5;
+  --color-accent: #D4A373;
+  --color-accent-light: #EEEEEE;
+  --color-accent-pale: rgba(212, 163, 115, 0.1);
+}
+
+@layer base {
+  body {
+    @apply bg-surface text-primary antialiased font-sans flex flex-col min-h-screen;
+    overscroll-behavior: none; /* Prevents pull-to-refresh on mobile apps */
+  }
+}
