@@ -16,6 +16,7 @@ export interface HistoryOutfit {
   scenario: string;
   weather: string;
   createdAt: number;
+  itemIds?: string[];
 }
 
 export interface OutfitRecommendation {

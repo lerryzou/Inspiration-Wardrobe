@@ -3,7 +3,7 @@ import { Camera, Plus, Shirt, Wand2, Trash2, X, RefreshCw, UploadCloud, ChevronR
 import { motion, AnimatePresence } from 'motion/react';
 import { get, set } from 'idb-keyval';
 import { Category, WardrobeItem, OutfitRecommendation, HistoryOutfit } from './types';
-import { analyzeSingleClothingItem, generateOutfit, enhanceClothingImage, generateVirtualTryOn, processSingleItemImage } from './services/ai';
+import { analyzeSingleClothingItem, generateOutfit, enhanceClothingImage, generateVirtualTryOn, processSingleItemImage, generateFaceSwap, detectFaceInImage } from './services/ai';
 import { compressImage, cropImage } from './lib/imageUtils';
 
 // --- Custom Hooks ---
@@ -84,6 +84,10 @@ export default function App() {
     setHistory(prev => [outfit, ...prev]);
   };
 
+  const handleRemoveHistory = (id: string) => {
+    setHistory(prev => prev.filter(h => h.id !== id));
+  };
+
   return (
     <div className="max-w-md mx-auto h-[100dvh] overflow-hidden bg-surface flex flex-col relative sm:border sm:border-border-custom mt-0 sm:mt-8 sm:h-[90vh]">
       {/* Main Content Area */}
@@ -96,10 +100,10 @@ export default function App() {
             <AddTab key="add" onAdd={addToWardrobe} onCancel={() => setActiveTab(previousTab)} />
           )}
           {activeTab === 'inspiration' && (
-            <InspirationTab key="inspiration" wardrobe={wardrobe} onNavAdd={() => goToAdd('inspiration')} onNavWardrobe={() => setActiveTab('wardrobe')} onNavHistory={() => setActiveTab('history')} historyCount={history.length} onSaveHistory={handleSaveToHistory} />
+            <InspirationTab key="inspiration" wardrobe={wardrobe} history={history} onNavAdd={() => goToAdd('inspiration')} onNavWardrobe={() => setActiveTab('wardrobe')} onNavHistory={() => setActiveTab('history')} historyCount={history.length} onSaveHistory={handleSaveToHistory} />
           )}
           {activeTab === 'history' && (
-            <HistoryTab key="history" history={history} onBack={() => setActiveTab('inspiration')} />
+            <HistoryTab key="history" history={history} onBack={() => setActiveTab('inspiration')} onRemove={handleRemoveHistory} />
           )}
         </AnimatePresence>
       </main>
@@ -109,14 +113,59 @@ export default function App() {
 
 // --- Wardrobe Tab ---
 function WardrobeTab({ wardrobe, onRemove, onBack, onNavAdd }: { key?: string, wardrobe: WardrobeItem[], onRemove: (id: string) => void, onBack: () => void, onNavAdd: () => void }) {
-  const categories: Category[] = ['上装', '下装', '连衣裙', '鞋子', '包包', '配饰'];
+  const [filter, setFilter] = useState<string>('全部');
+  const [fullscreenItem, setFullscreenItem] = useState<WardrobeItem | null>(null);
 
-  const [filter, setFilter] = useState<Category | '全部'>('全部');
-  const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
+  // Dynamically generate all unique tags from current wardrobe
+  const availableCategories = Array.from(new Set(wardrobe.map(item => item.category))).filter(Boolean);
+  const availableColors = Array.from(new Set(wardrobe.map(item => item.color))).filter(Boolean);
+  const availableStyleTags = Array.from(new Set(wardrobe.flatMap(item => item.styleTags))).filter(Boolean);
+  
+  const uniqueTags = Array.from(new Set([...availableCategories, ...availableStyleTags, ...availableColors]));
+
+  // Auto-reset filter if the current filter is no longer available (e.g. after deletion)
+  useEffect(() => {
+    if (filter !== '全部' && !uniqueTags.includes(filter)) {
+      setFilter('全部');
+    }
+  }, [filter, uniqueTags]);
+
+  // Lock scroll when fullscreen
+  useEffect(() => {
+    const mainEl = document.querySelector('main');
+    if (fullscreenItem) {
+      document.body.style.overflow = 'hidden';
+      if (mainEl) mainEl.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+      if (mainEl) mainEl.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+      if (mainEl) mainEl.style.overflow = '';
+    };
+  }, [fullscreenItem]);
 
   const displayedWardrobe = filter === '全部' 
     ? wardrobe 
-    : wardrobe.filter(item => item.category === filter);
+    : wardrobe.filter(item => 
+        item.category === filter || 
+        item.color === filter || 
+        item.styleTags.includes(filter)
+      );
+
+  const currentIndex = fullscreenItem ? displayedWardrobe.findIndex(i => i.id === fullscreenItem.id) : -1;
+
+  const dragHandlers = {
+    onDragEnd: (e: any, { offset, velocity }: any) => {
+      const swipe = offset.x;
+      if (swipe < -50 && currentIndex !== -1 && currentIndex < displayedWardrobe.length - 1) {
+        setFullscreenItem(displayedWardrobe[currentIndex + 1]);
+      } else if (swipe > 50 && currentIndex > 0) {
+        setFullscreenItem(displayedWardrobe[currentIndex - 1]);
+      }
+    }
+  };
 
   return (
     <motion.div 
@@ -126,23 +175,62 @@ function WardrobeTab({ wardrobe, onRemove, onBack, onNavAdd }: { key?: string, w
       className="pb-8"
     >
       <AnimatePresence>
-        {fullscreenImage && (
+        {fullscreenItem && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => setFullscreenImage(null)}
-            className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center p-4 cursor-pointer"
+            onClick={() => setFullscreenItem(null)}
+            className="fixed inset-0 z-50 bg-black/80 flex flex-col items-center justify-center p-4 cursor-pointer"
           >
             <motion.img 
-              initial={{ scale: 0.9 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.9 }}
-              src={fullscreenImage} 
-              alt="Full screen clothing item" 
-              className="max-w-full max-h-[85vh] object-contain rounded-lg drop-shadow-2xl" 
+              drag="x"
+              dragConstraints={{ left: 0, right: 0 }}
+              dragElastic={1}
+              {...dragHandlers}
+              key={fullscreenItem.id}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              src={fullscreenItem.imageUrl} 
+              alt={fullscreenItem.name}
+              className="max-w-full max-h-[75vh] object-contain rounded-lg drop-shadow-2xl" 
             />
-            <p className="text-white/60 text-sm mt-6 mb-safe tracking-widest uppercase">点击任意处关闭</p>
+            
+            <div className="mt-8 mb-safe text-center flex flex-col items-center pointer-events-none">
+              <h3 className="text-white text-lg font-medium tracking-wide mb-2">{fullscreenItem.name}</h3>
+              <p className="text-white/60 text-sm mb-3">{fullscreenItem.category} / {fullscreenItem.color}</p>
+              
+              {fullscreenItem.styleTags.length > 0 && (
+                <div className="flex flex-wrap gap-2 justify-center">
+                  {fullscreenItem.styleTags.map((tag, i) => (
+                    <span key={i} className="text-xs bg-white/10 text-white/80 px-2.5 py-1 rounded-md backdrop-blur-sm border border-white/10">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Navigation Arrows */}
+            {currentIndex > 0 && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); setFullscreenItem(displayedWardrobe[currentIndex - 1]); }}
+                className="absolute left-0 top-1/2 -translate-y-1/2 p-2 px-1 sm:px-2 text-white/80 hover:text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)] transition-colors z-50"
+              >
+                <ChevronLeft className="w-10 h-10 sm:w-12 sm:h-12 stroke-[2]" />
+              </button>
+            )}
+            
+            {currentIndex !== -1 && currentIndex < displayedWardrobe.length - 1 && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); setFullscreenItem(displayedWardrobe[currentIndex + 1]); }}
+                className="absolute right-0 top-1/2 -translate-y-1/2 p-2 px-1 sm:px-2 text-white/80 hover:text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)] transition-colors z-50"
+              >
+                <ChevronRight className="w-10 h-10 sm:w-12 sm:h-12 stroke-[2]" />
+              </button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -161,22 +249,26 @@ function WardrobeTab({ wardrobe, onRemove, onBack, onNavAdd }: { key?: string, w
       </div>
 
       {/* Filters */}
-      <div className="sticky top-0 z-10 bg-surface flex gap-1.5 overflow-x-auto pt-2 pb-2 -mx-6 px-6 mb-4 scrollbar-hide">
+      <div className="sticky top-0 z-10 bg-surface/75 backdrop-blur-md flex gap-1.5 overflow-x-auto pt-2 pb-2 -mx-6 px-6 mb-4 scrollbar-hide">
         <button
           onClick={() => setFilter('全部')}
           className={`shrink-0 px-3 py-1 rounded-[20px] text-[12px] transition-colors ${filter === '全部' ? 'bg-accent text-white' : 'bg-accent-light text-primary'}`}
         >
           {filter === '全部' ? `全部 ${wardrobe.length}` : '全部'}
         </button>
-        {categories.map(c => {
-          const count = wardrobe.filter(item => item.category === c).length;
+        {uniqueTags.map(tag => {
+          const count = wardrobe.filter(item => 
+            item.category === tag || 
+            item.color === tag || 
+            item.styleTags.includes(tag)
+          ).length;
           return (
             <button
-              key={c}
-              onClick={() => setFilter(c)}
-              className={`shrink-0 px-3 py-1 rounded-[20px] text-[12px] transition-colors ${filter === c ? 'bg-accent text-white' : 'bg-accent-light text-primary'}`}
+              key={tag}
+              onClick={() => setFilter(tag)}
+              className={`shrink-0 px-3 py-1 rounded-[20px] text-[12px] transition-colors ${filter === tag ? 'bg-accent text-white' : 'bg-accent-light text-primary'}`}
             >
-              {filter === c ? `${c} ${count}` : c}
+              {filter === tag ? `${tag} ${count}` : tag}
             </button>
           );
         })}
@@ -202,11 +294,11 @@ function WardrobeTab({ wardrobe, onRemove, onBack, onNavAdd }: { key?: string, w
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9 }}
                 key={item.id} 
-                className="bg-surface rounded-xl overflow-hidden flex flex-col group relative"
+                className="bg-white rounded-xl overflow-hidden flex flex-col group relative shadow-[0_2px_10px_rgba(0,0,0,0.04)] border border-black/5 hover:shadow-md transition-shadow"
               >
                 <div 
                   className="aspect-[3/4] relative bg-border-custom rounded-md mx-1.5 mt-1.5 flex items-center justify-center overflow-hidden cursor-pointer"
-                  onClick={() => setFullscreenImage(item.imageUrl)}
+                  onClick={() => setFullscreenItem(item)}
                 >
                   <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
                   <button 
@@ -217,17 +309,7 @@ function WardrobeTab({ wardrobe, onRemove, onBack, onNavAdd }: { key?: string, w
                   </button>
                 </div>
                 <div className="p-2 text-center flex flex-col items-center">
-                  <h4 className="text-[13px] font-medium text-primary line-clamp-1 mb-0.5" title={item.name}>{item.name.toUpperCase()}</h4>
-                  <p className="text-[11px] text-[#999] mb-1.5">{item.category} / {item.color}</p>
-                  {item.styleTags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 justify-center">
-                      {item.styleTags.slice(0, 2).map((tag, i) => (
-                        <span key={i} className="text-[9px] bg-accent-pale text-accent px-1.5 py-0.5 rounded-[3px]">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  <h4 className="text-xs text-[#666] line-clamp-1 mb-0.5" title={item.name}>{item.name}</h4>
                 </div>
               </motion.div>
             ))}
@@ -503,8 +585,16 @@ function AddTab({ onAdd, onCancel }: { key?: string, onAdd: (items: WardrobeItem
   );
 }
 
+// --- Global State for Inspiration Tab to persist across tab navigation ---
+let globalInspirationSession: {
+  result: { title: string, description: string, itemIds: string[] } | null;
+  tryOnImage: string | null;
+  isSaved: boolean;
+  showReason: boolean;
+} | null = null;
+
 // --- Inspiration Tab ---
-function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, historyCount, onSaveHistory }: { key?: string, wardrobe: WardrobeItem[], onNavAdd: () => void, onNavWardrobe: () => void, onNavHistory: () => void, historyCount: number, onSaveHistory: (outfit: HistoryOutfit) => void }) {
+function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHistory, historyCount, onSaveHistory }: { key?: string, wardrobe: WardrobeItem[], history: HistoryOutfit[], onNavAdd: () => void, onNavWardrobe: () => void, onNavHistory: () => void, historyCount: number, onSaveHistory: (outfit: HistoryOutfit) => void }) {
   const DEFAULT_SCENARIOS = ['日常通勤上课', '与闺蜜一起逛街', '去郊区远足'];
   const [scenario, setScenario] = useState(() => {
     const saved = localStorage.getItem('wardrobe_scenario_current');
@@ -572,6 +662,14 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
     setShowScenarioDropdown(false);
   };
   
+  const [city, setCity] = useState(() => {
+    const saved = localStorage.getItem('wardrobe_weather_data');
+    if (saved) {
+      try { return JSON.parse(saved).city || '同城'; } catch (e) {}
+    }
+    return '同城';
+  });
+  
   const [weather, setWeather] = useState(() => {
     const saved = localStorage.getItem('wardrobe_weather_data');
     if (saved) {
@@ -584,14 +682,30 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCanceled, setIsCanceled] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const [result, setResult] = useState<{ title: string, description: string, itemIds: string[] } | null>(null);
+  const [result, setResult] = useState<{ title: string, description: string, itemIds: string[] } | null>(globalInspirationSession?.result || null);
   const [error, setError] = useState<string | null>(null);
-  const [showReason, setShowReason] = useState(false);
+  const [showReason, setShowReason] = useState(globalInspirationSession?.showReason || false);
 
-  const [tryOnImage, setTryOnImage] = useState<string | null>(null);
+  const [tryOnImage, setTryOnImage] = useState<string | null>(globalInspirationSession?.tryOnImage || null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const [isSaved, setIsSaved] = useState(false);
+  const [isSaved, setIsSaved] = useState(globalInspirationSession?.isSaved || false);
   const [plusOneAnim, setPlusOneAnim] = useState(0);
+
+  // Sync state to global variable whenever it changes so it survives unmounts
+  useEffect(() => {
+    globalInspirationSession = {
+      result,
+      tryOnImage,
+      isSaved,
+      showReason
+    };
+  }, [result, tryOnImage, isSaved, showReason]);
+
+  // Face swap states
+  const [customModelImage, setCustomModelImage] = useIDBStorage<string | null>('linggan_custom_model', null);
+  const [isFaceSwapping, setIsFaceSwapping] = useState(false);
+  const [previewFaceSwapImage, setPreviewFaceSwapImage] = useState<string | null>(null);
+  const faceSwapInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const checkAndFetchWeather = async () => {
@@ -614,15 +728,19 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
     checkAndFetchWeather();
   }, []);
 
-  const fetchWeather = async (): Promise<string> => {
+  const fetchWeather = async (): Promise<{ weather: string, city: string }> => {
     return new Promise((resolve, reject) => {
         if (!navigator.geolocation) return reject(new Error('no_geolocation'));
         navigator.geolocation.getCurrentPosition(async (pos) => {
             const { latitude, longitude } = pos.coords;
             try {
-                const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`);
-                if (!res.ok) throw new Error('network_error');
-                const data = await res.json();
+                const [weatherRes, geoRes] = await Promise.all([
+                    fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`),
+                    fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=zh`)
+                ]);
+                
+                if (!weatherRes.ok) throw new Error('network_error');
+                const data = await weatherRes.json();
                 const t = Math.round(data.current_weather.temperature);
                 const code = data.current_weather.weathercode;
                 let desc = "☀︎晴";
@@ -633,7 +751,13 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
                 else if (code >= 71 && code <= 79) desc = "❄️雪";
                 else if (code >= 80 && code <= 99) desc = "⛈️雷阵雨";
                 
-                resolve(`${desc}，${t}℃`);
+                let cityName = "同城";
+                if (geoRes.ok) {
+                    const geoData = await geoRes.json();
+                    cityName = geoData.city || geoData.locality || geoData.principalSubdivision || "同城";
+                }
+                
+                resolve({ weather: `${desc}，${t}℃`, city: cityName });
             } catch (e) {
                 reject(e);
             }
@@ -648,10 +772,12 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
     if (isWeatherUpdating) return;
     setIsWeatherUpdating(true);
     try {
-        const weatherStr = await fetchWeather();
+        const { weather: weatherStr, city: cityName } = await fetchWeather();
         setWeather(weatherStr);
+        setCity(cityName);
         localStorage.setItem('wardrobe_weather_data', JSON.stringify({
             weatherString: weatherStr,
+            city: cityName,
             lastUpdated: Date.now()
         }));
     } catch (err: any) {
@@ -696,18 +822,99 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
     setIsFullscreen(!isFullscreen);
   };
 
-  const getBase64FromImage = (imgEl: HTMLImageElement): string | null => {
+  const handleFaceSwapClick = () => {
+    setShowActionSheet(false);
+    setIsFullscreen(false);
+    faceSwapInputRef.current?.click();
+  };
+
+  const getBase64FromImageAsync = async (imgEl: HTMLImageElement): Promise<string | null> => {
     try {
-      const canvas = document.createElement("canvas");
-      canvas.width = imgEl.naturalWidth || imgEl.width;
-      canvas.height = imgEl.naturalHeight || imgEl.height;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return null;
-      ctx.drawImage(imgEl, 0, 0);
-      return canvas.toDataURL("image/jpeg", 0.95);
+      if (imgEl.src.startsWith('data:')) {
+        return imgEl.src;
+      }
+      
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = imgEl.naturalWidth || imgEl.width;
+        canvas.height = imgEl.naturalHeight || imgEl.height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(imgEl, 0, 0);
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
+          if (dataUrl && dataUrl !== "data:,") return dataUrl;
+        }
+      } catch (err) {
+        console.warn("Canvas cross-origin tainted, falling back to fetch", err);
+      }
+      
+      const res = await fetch(imgEl.src);
+      const blob = await res.blob();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
     } catch (e) {
-      console.error("Canvas draw error:", e);
+      console.error("getBase64FromImage error:", e);
       return null;
+    }
+  };
+
+  const abortControllerFaceSwapRef = useRef<AbortController | null>(null);
+
+  const handleCancelFaceSwap = () => {
+    if (abortControllerFaceSwapRef.current) {
+      abortControllerFaceSwapRef.current.abort(new Error("Canceled"));
+      abortControllerFaceSwapRef.current = null;
+    }
+    setIsFaceSwapping(false);
+  };
+
+  const onFaceSwapFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const abortController = new AbortController();
+    abortControllerFaceSwapRef.current = abortController;
+
+    const makeAbortable = <T,>(promise: Promise<T>): Promise<T> => {
+        return new Promise((resolve, reject) => {
+            const onAbort = () => reject(abortController.signal.reason || new Error("Canceled"));
+            if (abortController.signal.aborted) return onAbort();
+            abortController.signal.addEventListener('abort', onAbort);
+            promise.then(resolve).catch(reject).finally(() => {
+                abortController.signal.removeEventListener('abort', onAbort);
+            });
+        });
+    };
+
+    try {
+      setIsFaceSwapping(true);
+      setError(null);
+      const userFaceB64 = await makeAbortable(compressImage(file, 800));
+      
+      const hasFace = await makeAbortable(detectFaceInImage(userFaceB64));
+      if (!hasFace) {
+        setError("未能在图片中识别到清晰的人脸，请重新选择一张包含正脸的照片。");
+        return;
+      }
+      
+      const baseModelB64 = imgRef.current ? await getBase64FromImageAsync(imgRef.current) : null;
+      if (!baseModelB64) throw new Error('无法读取基础模特图像数据');
+
+      const resultB64 = await makeAbortable(generateFaceSwap(baseModelB64, userFaceB64));
+      setPreviewFaceSwapImage(resultB64);
+    } catch(err) {
+      console.error(err);
+      if (err instanceof Error && err.message === "Canceled") {
+        return; // handle silent cancellation
+      }
+      setError(err instanceof Error ? err.message : "换脸失败，请重试");
+    } finally {
+      setIsFaceSwapping(false);
+      if (faceSwapInputRef.current) faceSwapInputRef.current.value = '';
     }
   };
 
@@ -717,9 +924,10 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
     setShowReason(false);
     setError(null);
     setIsSaved(false);
+    globalInspirationSession = null;
   };
 
-  const handleSave = () => {
+  const handleSaveToHistoryAction = () => {
     if (!tryOnImage || isSaved) return;
     
     // Save to History (IDB)
@@ -728,16 +936,23 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
         imageUrl: tryOnImage,
         scenario,
         weather,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        itemIds: result?.itemIds || []
     });
     
     // Trigger animation & toggle 
     setIsSaved(true);
     setPlusOneAnim(prev => prev + 1);
+  };
+
+  const handleSaveToAlbum = () => {
+    if (!tryOnImage && !imgRef.current) return;
+    const targetUrl = tryOnImage || imgRef.current?.src;
+    if (!targetUrl) return;
 
     // Save to local device album / download
     const a = document.createElement("a");
-    a.href = tryOnImage;
+    a.href = targetUrl;
     a.download = "灵感穿搭.jpg";
     document.body.appendChild(a);
     a.click();
@@ -768,7 +983,7 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
   const handleGenerate = async () => {
     if (isGenerating) {
       if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+        abortControllerRef.current.abort(new Error("Canceled"));
         abortControllerRef.current = null;
       }
       setIsGenerating(false);
@@ -776,20 +991,47 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
       return;
     }
 
+    // Prepare a fresh abort controller and timeout for this generation
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
+    const timeoutId = setTimeout(() => {
+        if (!abortController.signal.aborted) {
+            abortController.abort(new Error("请求超时，请检查网络或稍后重试。"));
+        }
+    }, 45000); // 45 seconds timeout
+
     try {
       setIsGenerating(true);
       setIsCanceled(false);
       setError(null);
       setTryOnImage(null);
       setShowReason(false);
+
+      const makeAbortable = <T,>(promise: Promise<T>): Promise<T> => {
+          return new Promise((resolve, reject) => {
+              const onAbort = () => reject(abortController.signal.reason || new Error("Canceled"));
+              if (abortController.signal.aborted) return onAbort();
+              abortController.signal.addEventListener('abort', onAbort);
+              promise.then(resolve).catch(reject).finally(() => {
+                  abortController.signal.removeEventListener('abort', onAbort);
+              });
+          });
+      };
       
-      const res = await generateOutfit(wardrobe, scenario, weather);
-      if (isCanceled) return;
+      // Calculate today's worn items to avoid repetition
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const recentlyWornItemIds = history
+        .filter(h => h.createdAt > todayStart.getTime())
+        .flatMap(h => h.itemIds || []);
+      
+      const res = await makeAbortable(generateOutfit(wardrobe, scenario, weather, recentlyWornItemIds));
 
       setResult(res);
 
       if (res.itemIds && res.itemIds.length > 0 && imgRef.current) {
-        const base64Data = getBase64FromImage(imgRef.current);
+        const base64Data = await getBase64FromImageAsync(imgRef.current);
         if (base64Data) {
           const selectedItems = res.itemIds
             .map(id => wardrobe.find(w => w.id === id))
@@ -800,17 +1042,21 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
             .join('，搭配');
             
           const garmentUrls = selectedItems.map(item => item.imageUrl);
-          const tryOnB64 = await generateVirtualTryOn(base64Data, outfitDesc, garmentUrls);
-          if (isCanceled) return;
+          const tryOnB64 = await makeAbortable(generateVirtualTryOn(base64Data, outfitDesc, garmentUrls));
           setTryOnImage(tryOnB64);
         }
       }
     } catch (err: any) {
-      if (err.name !== 'AbortError') {
+      const isManualCancel = err.message === 'Canceled' || err.name === 'AbortError' || (abortController.signal.aborted && abortController.signal.reason?.message === 'Canceled');
+      if (!isManualCancel) {
         console.error(err);
         setError(err instanceof Error ? err.message : "生成失败，可能是衣柜衣服不够多或网络问题");
       }
     } finally {
+      clearTimeout(timeoutId);
+      if (abortControllerRef.current === abortController) {
+        abortControllerRef.current = null;
+      }
       setIsGenerating(false);
     }
   };
@@ -829,7 +1075,7 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
       {/* Background Image (Full Fill) */}
       <img 
         ref={imgRef}
-        src={tryOnImage || "/model_uploaded.jpg"}
+        src={tryOnImage || customModelImage || "/model_uploaded.jpg"}
         alt="Asian Girl Display Model"
         onClick={handleImageClick}
         onPointerDown={startPress}
@@ -842,12 +1088,14 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
         className={`absolute inset-0 w-full h-full object-cover transition-all duration-700 ${isFullscreen ? 'z-50' : 'z-0'}`}
         crossOrigin="anonymous"
         onError={(e) => {
-          if (!tryOnImage) {
+          if (!tryOnImage && !customModelImage) {
             e.currentTarget.src = "https://image.pollinations.ai/prompt/A%20short-haired%20Asian%20girl%20standing%20full%20body,%20wearing%20a%20basic%20white%20short-sleeve%20t-shirt,%20white%20shorts,%20and%20white%20sneakers.%20Simple%20studio%20lighting,%20pure%20white%20background,%20clean,%20fashion%20display%20model?width=400&height=700&seed=152&nologo=true";
           }
         }}
       />
       
+      <input type="file" accept="image/*" ref={faceSwapInputRef} onChange={onFaceSwapFileSelected} className="hidden" />
+
       {/* Action Sheet for Fullscreen Long Press */}
       <AnimatePresence>
         {showActionSheet && isFullscreen && (
@@ -865,16 +1113,42 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
               className="bg-white rounded-2xl overflow-hidden flex flex-col mb-4 pt-1"
             >
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSave();
-                  setShowActionSheet(false);
-                }}
-                className="w-full py-4 px-6 text-[15px] font-medium text-[#222] border-b border-[#eee] active:bg-[#f5f5f5] transition-colors"
-              >
-                保存到相册
-              </button>
+              {tryOnImage || (resultItems && resultItems.length > 0) ? (
+                 <button 
+                   onClick={(e) => {
+                     e.stopPropagation();
+                     handleSaveToAlbum();
+                     setShowActionSheet(false);
+                   }}
+                   className="w-full py-4 px-6 text-[15px] font-medium text-[#222] border-b border-[#eee] active:bg-[#f5f5f5] transition-colors"
+                 >
+                   保存到相册
+                 </button>
+              ) : (
+                <>
+                 <button 
+                   onClick={(e) => {
+                     e.stopPropagation();
+                     handleFaceSwapClick();
+                   }}
+                   className="w-full py-4 px-6 text-[15px] font-medium text-[#222] border-b border-[#eee] active:bg-[#f5f5f5] transition-colors"
+                 >
+                   换脸 (拍照/相册)
+                 </button>
+                 {customModelImage && (
+                   <button 
+                     onClick={(e) => {
+                       e.stopPropagation();
+                       setCustomModelImage(null);
+                       setShowActionSheet(false);
+                     }}
+                     className="w-full py-4 px-6 text-[15px] font-medium text-red-500 border-b border-[#eee] active:bg-[#f5f5f5] transition-colors"
+                   >
+                     还原默认模特
+                   </button>
+                 )}
+                </>
+              )}
               <button 
                 onClick={(e) => {
                   e.stopPropagation();
@@ -895,8 +1169,15 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
       {/* Floating Content wrapper */}
       <div className={`relative z-10 flex flex-col h-full pointer-events-none transition-opacity duration-300 ${isFullscreen ? 'opacity-0' : 'opacity-100'}`}>
 
+        {/* Date and City Indicator */}
+        <div className="pt-safe sm:pt-4 w-full flex justify-center pb-1 z-20 pointer-events-none">
+            <span className="text-[10px] text-gray-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] font-medium tracking-wide">
+                {new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })} · {city}
+            </span>
+        </div>
+
         {/* Top: Inputs floating over image */}
-        <div className="flex space-x-3 px-6 pt-6 shrink-0 z-20 pointer-events-none">
+        <div className="flex space-x-3 px-6 pt-1 shrink-0 z-20 pointer-events-none">
           <div className="flex-1 pointer-events-auto relative" ref={dropdownRef}>
             <input 
               type="text" 
@@ -947,6 +1228,7 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
                 setWeather(e.target.value);
                 localStorage.setItem('wardrobe_weather_data', JSON.stringify({
                     weatherString: e.target.value,
+                    city,
                     lastUpdated: Date.now()
                 }));
               }}
@@ -973,7 +1255,7 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
         <div className="flex-1 relative" />
 
         {isGenerating && (
-          <div className="absolute inset-0 bg-white/20 backdrop-blur-[2px] z-30 flex flex-col items-center justify-center gap-3">
+          <div className="absolute inset-0 bg-white/20 backdrop-blur-[2px] z-30 flex flex-col items-center justify-center gap-3 pointer-events-auto">
             <RefreshCw className="w-8 h-8 text-primary animate-spin drop-shadow-md" />
             <p className="text-sm font-medium text-primary tracking-widest uppercase drop-shadow-md">
               {result ? '正在生成试穿效果图...' : '寻找穿搭灵感中...'}
@@ -981,7 +1263,26 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
           </div>
         )}
 
-        {result && resultItems && resultItems.length > 0 && !isGenerating && (
+        {isFaceSwapping && (
+          <div className="absolute inset-0 bg-white/30 backdrop-blur-[4px] z-30 flex flex-col items-center justify-center gap-3 pointer-events-auto">
+            <RefreshCw className="w-8 h-8 text-primary animate-spin drop-shadow-md" />
+            <p className="text-sm font-medium text-primary tracking-widest uppercase drop-shadow-md">
+              正在提取面部并融合生成换脸...
+            </p>
+          </div>
+        )}
+
+        {previewFaceSwapImage && (
+          <div className="absolute inset-0 z-50 flex flex-col pointer-events-auto">
+            <img src={previewFaceSwapImage} className="w-full h-full object-cover" alt="Preview Face Swap" />
+            <div className="absolute bottom-8 left-0 right-0 flex justify-center gap-6 px-6">
+                 <button onClick={() => setPreviewFaceSwapImage(null)} className="px-8 py-3 bg-white/20 backdrop-blur-md rounded-full text-white font-medium shadow-[0_4px_20px_rgba(0,0,0,0.15)] border border-white/30 active:scale-95 transition-transform" >取消换脸</button>
+                 <button onClick={() => { setCustomModelImage(previewFaceSwapImage); setPreviewFaceSwapImage(null); }} className="px-8 py-3 bg-primary rounded-full text-white font-medium shadow-[0_4px_20px_rgba(0,0,0,0.3)] border border-black/10 active:scale-95 transition-transform" >确认保存</button>
+            </div>
+          </div>
+        )}
+
+        {result && resultItems && resultItems.length > 0 && !isGenerating && !previewFaceSwapImage && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -1075,7 +1376,7 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
             >
               <div className="flex flex-col items-center gap-1.5">
                 <button 
-                  onClick={handleSave}
+                  onClick={handleSaveToHistoryAction}
                   disabled={isSaved}
                   className={`w-14 h-14 backdrop-blur-[6px] border rounded-full flex items-center justify-center transition-all shadow-[0_4px_15px_rgba(0,0,0,0.08)] ${isSaved ? 'bg-black/10 border-white/20 text-[#888] cursor-not-allowed' : 'bg-white/30 border-white/50 text-[#222] hover:bg-white/50 hover:scale-105'}`}
                 >
@@ -1102,6 +1403,14 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
                 <span className="text-[12px] text-[#444] font-medium drop-shadow-lg">重来</span>
               </div>
             </motion.div>
+          ) : isFaceSwapping ? (
+            <button 
+                onClick={handleCancelFaceSwap}
+                className="w-[90%] max-w-[280px] rounded-full py-4 text-sm font-medium shadow-[0_8px_30px_rgba(0,0,0,0.1)] flex justify-center items-center gap-2 transition-all pointer-events-auto backdrop-blur-[6px] border bg-red-500/20 border-red-500/30 text-red-600 hover:bg-red-600/30"
+              >
+                <X className="w-4 h-4" />
+                取消
+            </button>
           ) : (
             <>
               <button 
@@ -1135,8 +1444,24 @@ function InspirationTab({ wardrobe, onNavAdd, onNavWardrobe, onNavHistory, histo
 }
 
 // --- History Tab ---
-function HistoryTab({ history, onBack }: { key?: string, history: HistoryOutfit[], onBack: () => void }) {
+function HistoryTab({ history, onBack, onRemove }: { key?: string, history: HistoryOutfit[], onBack: () => void, onRemove: (id: string) => void }) {
   const [fullscreenIndex, setFullscreenIndex] = useState<number | null>(null);
+
+  // Lock scroll when fullscreen
+  useEffect(() => {
+    const mainEl = document.querySelector('main');
+    if (fullscreenIndex !== null) {
+      document.body.style.overflow = 'hidden';
+      if (mainEl) mainEl.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+      if (mainEl) mainEl.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+      if (mainEl) mainEl.style.overflow = '';
+    };
+  }, [fullscreenIndex]);
 
   const dragHandlers = {
     onDragEnd: (e: any, { offset, velocity }: any) => {
@@ -1162,16 +1487,8 @@ function HistoryTab({ history, onBack }: { key?: string, history: HistoryOutfit[
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/95 flex flex-col pt-12"
+            className="fixed inset-0 z-50 bg-black flex flex-col"
           >
-            {/* Overlay Status (Date, Scenario, Weather) - overlaying similar to Inspiration Tab */}
-            <div className="absolute top-12 left-0 right-0 z-50 pointer-events-none px-6">
-              <div className="text-white/80 text-sm font-medium drop-shadow-md text-center bg-black/30 backdrop-blur-sm rounded-full py-2 w-max mx-auto px-6 border border-white/10">
-                {new Date(history[fullscreenIndex].createdAt).toLocaleDateString()} · {history[fullscreenIndex].scenario}
-                <div className="text-xs text-white/60 mt-0.5">{history[fullscreenIndex].weather}</div>
-              </div>
-            </div>
-
             <motion.img 
               drag="x"
               dragConstraints={{ left: 0, right: 0 }}
@@ -1184,13 +1501,40 @@ function HistoryTab({ history, onBack }: { key?: string, history: HistoryOutfit[
               transition={{ duration: 0.2 }}
               src={history[fullscreenIndex].imageUrl} 
               alt="History Outfit Fullscreen" 
-              className="flex-1 w-full h-[80vh] object-contain cursor-pointer"
+              className="absolute inset-0 w-full h-full object-cover cursor-pointer"
               onClick={() => setFullscreenIndex(null)}
             />
-            
-            <div className="pb-8 pt-4 text-center pointer-events-none shrink-0">
-               <p className="text-white/50 text-xs">滑动切换图片 / 点击关闭</p>
+
+            {/* Overlay Status (Date, Weather, Scenario) */}
+            <div className="absolute top-safe pt-6 left-0 right-0 z-50 pointer-events-none px-6 flex flex-col items-center gap-1.5 drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
+              <div className="text-white/90 text-[11px] font-medium tracking-wide flex items-center justify-center gap-2">
+                 <span>{new Date(history[fullscreenIndex].createdAt).toLocaleDateString()}</span>
+                 <span>·</span>
+                 <span>{history[fullscreenIndex].weather}</span>
+              </div>
+              <div className="text-white text-sm font-medium tracking-wide">
+                 {history[fullscreenIndex].scenario}
+              </div>
             </div>
+
+            {/* Navigation Arrows */}
+            {fullscreenIndex > 0 && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); setFullscreenIndex(fullscreenIndex - 1); }}
+                className="absolute left-2 top-1/2 -translate-y-1/2 p-2 text-white/60 hover:text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)] transition-colors z-50"
+              >
+                <ChevronLeft className="w-10 h-10 stroke-[1.5]" />
+              </button>
+            )}
+            
+            {fullscreenIndex < history.length - 1 && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); setFullscreenIndex(fullscreenIndex + 1); }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-white/60 hover:text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)] transition-colors z-50"
+              >
+                <ChevronRight className="w-10 h-10 stroke-[1.5]" />
+              </button>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -1213,22 +1557,38 @@ function HistoryTab({ history, onBack }: { key?: string, history: HistoryOutfit[
             </div>
         ) : (
             <div className="grid grid-cols-2 gap-3 pb-safe">
-              {history.map((item, index) => (
-                <div 
-                  key={item.id} 
-                  className="bg-white rounded-xl overflow-hidden flex flex-col shadow-[0_2px_10px_rgba(0,0,0,0.03)] border border-black/5 cursor-pointer hover:shadow-md transition-shadow"
-                  onClick={() => setFullscreenIndex(index)}
-                >
-                  <div className="aspect-[3/4] relative bg-gray-100 overflow-hidden">
-                    <img src={item.imageUrl} alt="Outfit" className="w-full h-full object-cover" />
-                  </div>
-                  <div className="p-3 flex flex-col gap-1">
-                    <div className="text-[10px] text-[#999]">{new Date(item.createdAt).toLocaleDateString()}</div>
-                    <div className="text-xs font-medium text-[#333] truncate">{item.scenario}</div>
-                    <div className="text-[10px] text-[#666] truncate">{item.weather}</div>
-                  </div>
-                </div>
-              ))}
+              <AnimatePresence mode="popLayout">
+                {history.map((item, index) => (
+                  <motion.div 
+                    layout
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.2 } }}
+                    key={item.id} 
+                    className="bg-white rounded-xl overflow-hidden flex flex-col group shadow-[0_2px_10px_rgba(0,0,0,0.03)] border border-black/5 cursor-pointer hover:shadow-md transition-shadow relative"
+                    onClick={() => setFullscreenIndex(index)}
+                  >
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemove(item.id);
+                        if (fullscreenIndex !== null && fullscreenIndex === index) {
+                           setFullscreenIndex(null);
+                        }
+                      }}
+                      className="absolute top-2 right-2 w-7 h-7 bg-white/80 backdrop-blur-sm rounded-full flex items-center justify-center text-red-500 opacity-0 group-hover:opacity-100 transition-opacity z-20 pointer-events-auto drop-shadow-sm"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                    <div className="absolute top-3 left-0 right-0 flex justify-center pointer-events-none z-10">
+                      <span className="text-[9px] font-medium tracking-wider text-white">{new Date(item.createdAt).toLocaleDateString()}</span>
+                    </div>
+                    <div className="aspect-[9/16] relative bg-gray-100 overflow-hidden">
+                      <img src={item.imageUrl} alt="Outfit" className="w-full h-full object-cover" />
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
         )}
       </div>
