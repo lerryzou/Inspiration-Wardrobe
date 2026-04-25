@@ -89,7 +89,7 @@ export default function App() {
   };
 
   return (
-    <div className="max-w-md mx-auto h-[100dvh] overflow-hidden bg-surface flex flex-col relative sm:border sm:border-border-custom mt-0 sm:mt-8 sm:h-[90vh]">
+    <div className={`max-w-md mx-auto h-[100dvh] overflow-hidden flex flex-col relative sm:border sm:border-border-custom mt-0 sm:mt-8 sm:h-[90vh] ${activeTab === 'add' ? 'bg-white' : 'bg-surface'}`}>
       {/* Main Content Area */}
       <main className={`flex-1 overflow-y-auto custom-scrollbar relative z-0 flex flex-col ${activeTab === 'inspiration' ? '' : 'px-6 pt-6'}`}>
         <AnimatePresence mode="wait">
@@ -115,6 +115,41 @@ export default function App() {
 function WardrobeTab({ wardrobe, onRemove, onBack, onNavAdd }: { key?: string, wardrobe: WardrobeItem[], onRemove: (id: string) => void, onBack: () => void, onNavAdd: () => void }) {
   const [filter, setFilter] = useState<string>('全部');
   const [fullscreenItem, setFullscreenItem] = useState<WardrobeItem | null>(null);
+
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handleTouchStart = (e: TouchEvent) => {
+      touchStartX.current = e.touches[0].clientX;
+      touchStartY.current = e.touches[0].clientY;
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (touchStartX.current !== null && touchStartY.current !== null) {
+        const touchEndX = e.changedTouches[0].clientX;
+        const touchEndY = e.changedTouches[0].clientY;
+        const deltaX = touchEndX - touchStartX.current;
+        const deltaY = touchEndY - touchStartY.current;
+
+        if (deltaX > 50 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) {
+          if (!fullscreenItem) {
+            onBack();
+          }
+        }
+        touchStartX.current = null;
+        touchStartY.current = null;
+      }
+    };
+
+    document.addEventListener('touchstart', handleTouchStart, { passive: true });
+    document.addEventListener('touchend', handleTouchEnd, { passive: true });
+
+    return () => {
+      document.removeEventListener('touchstart', handleTouchStart);
+      document.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [onBack, fullscreenItem]);
 
   // Dynamically generate all unique tags from current wardrobe
   const availableCategories = Array.from(new Set(wardrobe.map(item => item.category))).filter(Boolean);
@@ -333,6 +368,13 @@ function AddTab({ onAdd, onCancel }: { key?: string, onAdd: (items: WardrobeItem
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
   const [saveProgress, setSaveProgress] = useState<{current: number, total: number} | null>(null);
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -447,8 +489,10 @@ function AddTab({ onAdd, onCancel }: { key?: string, onAdd: (items: WardrobeItem
       </div>
 
       {!photoUrl ? (
-        <div className="flex flex-col gap-4 flex-1 justify-center max-w-sm mx-auto w-full">
+        <div className="flex flex-col gap-4 flex-1 justify-center max-w-sm mx-auto w-full pt-4 pb-8">
+          
           <div 
+            className="flex-1 flex items-center justify-center cursor-pointer active:scale-[0.98] transition-transform"
             onClick={() => {
               if (fileInputRef.current) {
                 fileInputRef.current.removeAttribute('capture');
@@ -456,33 +500,41 @@ function AddTab({ onAdd, onCancel }: { key?: string, onAdd: (items: WardrobeItem
                 fileInputRef.current.click();
               }
             }}
-            className="flex-1 bg-white border border-border-custom rounded-3xl p-6 flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-primary hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all group"
           >
-            <div className="w-16 h-16 bg-[#fafafa] group-hover:bg-accent/10 rounded-full flex items-center justify-center transition-colors">
-              <Camera className="w-8 h-8 text-[#555] group-hover:text-accent transition-colors" />
-            </div>
-            <div className="text-center">
-              <p className="font-medium text-[15px] mb-1.5 text-primary">拍照</p>
-              <p className="text-[11px] text-[#999]">让 AI 自动识别单品</p>
-            </div>
+            <img src="/add-background.png" alt="拍摄示意图" className="w-full h-auto object-contain mix-blend-darken pointer-events-none" />
           </div>
-          
-          <div 
-            onClick={() => {
-              if (fileInputRef.current) {
-                fileInputRef.current.removeAttribute('capture');
-                fileInputRef.current.click();
-              }
-            }}
-            className="flex-1 bg-white border border-border-custom rounded-3xl p-6 flex flex-col items-center justify-center gap-4 cursor-pointer hover:border-primary hover:shadow-[0_8px_30px_rgba(0,0,0,0.06)] transition-all group"
-          >
-            <div className="w-16 h-16 bg-[#fafafa] group-hover:bg-accent/10 rounded-full flex items-center justify-center transition-colors">
-              <UploadCloud className="w-8 h-8 text-[#555] group-hover:text-accent transition-colors" />
-            </div>
-            <div className="text-center">
-              <p className="font-medium text-[15px] mb-1.5 text-primary">从相册上传</p>
-              <p className="text-[11px] text-[#999]">挑选已有的照片</p>
-            </div>
+
+          <div className="flex flex-col gap-3">
+            <button 
+              onClick={() => {
+                if (fileInputRef.current) {
+                  fileInputRef.current.removeAttribute('capture');
+                  fileInputRef.current.setAttribute('capture', 'environment');
+                  fileInputRef.current.click();
+                }
+              }}
+              className="bg-primary text-white rounded-2xl py-4 flex flex-col items-center justify-center hover:bg-black/80 transition-all shadow-md active:scale-[0.98]"
+            >
+              <div className="flex items-center gap-2">
+                <Camera className="w-5 h-5" />
+                <span className="font-medium text-[16px]">拍照</span>
+              </div>
+            </button>
+            
+            <button 
+              onClick={() => {
+                if (fileInputRef.current) {
+                  fileInputRef.current.removeAttribute('capture');
+                  fileInputRef.current.click();
+                }
+              }}
+              className="bg-white border border-border-custom text-primary rounded-2xl py-4 flex flex-col items-center justify-center hover:border-primary transition-all active:scale-[0.98]"
+            >
+              <div className="flex items-center gap-2">
+                <UploadCloud className="w-5 h-5 text-[#666]" />
+                <span className="font-medium text-[16px]">从相册上传</span>
+              </div>
+            </button>
           </div>
 
           <input 
@@ -587,7 +639,7 @@ function AddTab({ onAdd, onCancel }: { key?: string, onAdd: (items: WardrobeItem
 
 // --- Global State for Inspiration Tab to persist across tab navigation ---
 let globalInspirationSession: {
-  result: { title: string, description: string, itemIds: string[] } | null;
+  result: { title: string, description: string, itemIds: string[], score?: number } | null;
   tryOnImage: string | null;
   isSaved: boolean;
   showReason: boolean;
@@ -682,9 +734,16 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCanceled, setIsCanceled] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const [result, setResult] = useState<{ title: string, description: string, itemIds: string[] } | null>(globalInspirationSession?.result || null);
+  const [result, setResult] = useState<{ title: string, description: string, itemIds: string[], score?: number } | null>(globalInspirationSession?.result || null);
   const [error, setError] = useState<string | null>(null);
   const [showReason, setShowReason] = useState(globalInspirationSession?.showReason || false);
+
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
 
   const [tryOnImage, setTryOnImage] = useState<string | null>(globalInspirationSession?.tryOnImage || null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -706,6 +765,22 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
   const [isFaceSwapping, setIsFaceSwapping] = useState(false);
   const [previewFaceSwapImage, setPreviewFaceSwapImage] = useState<string | null>(null);
   const faceSwapInputRef = useRef<HTMLInputElement>(null);
+
+  const [showFaceSwapHint, setShowFaceSwapHint] = useState(false);
+
+  useEffect(() => {
+    if (error || tryOnImage) {
+      setShowFaceSwapHint(false);
+      return;
+    }
+    if (!customModelImage) {
+      setShowFaceSwapHint(true);
+      const timer = setTimeout(() => setShowFaceSwapHint(false), 5000);
+      return () => clearTimeout(timer);
+    } else {
+      setShowFaceSwapHint(false);
+    }
+  }, [customModelImage, error, tryOnImage]);
 
   useEffect(() => {
     const checkAndFetchWeather = async () => {
@@ -798,7 +873,7 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const startPress = () => {
-    if (!isFullscreen) return;
+    if (tryOnImage) return;
     pressTimer.current = setTimeout(() => {
       setShowActionSheet(true);
     }, 600);
@@ -937,7 +1012,8 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
         scenario,
         weather,
         createdAt: Date.now(),
-        itemIds: result?.itemIds || []
+        itemIds: result?.itemIds || [],
+        score: result?.score
     });
     
     // Trigger animation & toggle 
@@ -999,7 +1075,7 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
         if (!abortController.signal.aborted) {
             abortController.abort(new Error("请求超时，请检查网络或稍后重试。"));
         }
-    }, 45000); // 45 seconds timeout
+    }, 300000); // 300 seconds timeout
 
     try {
       setIsGenerating(true);
@@ -1083,7 +1159,13 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
         onPointerMove={cancelPress}
         onPointerCancel={cancelPress}
         onContextMenu={(e) => {
-          if (isFullscreen) e.preventDefault(); // Prevent default mobile save dialog to use our action sheet
+          e.preventDefault();
+          e.stopPropagation();
+        }}
+        style={{
+          WebkitTouchCallout: 'none',
+          WebkitUserSelect: 'none',
+          userSelect: 'none'
         }}
         className={`absolute inset-0 w-full h-full object-cover transition-all duration-700 ${isFullscreen ? 'z-50' : 'z-0'}`}
         crossOrigin="anonymous"
@@ -1096,9 +1178,9 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
       
       <input type="file" accept="image/*" ref={faceSwapInputRef} onChange={onFaceSwapFileSelected} className="hidden" />
 
-      {/* Action Sheet for Fullscreen Long Press */}
+      {/* Action Sheet for Long Press */}
       <AnimatePresence>
-        {showActionSheet && isFullscreen && (
+        {showActionSheet && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -1171,7 +1253,7 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
 
         {/* Date and City Indicator */}
         <div className="pt-safe sm:pt-4 w-full flex justify-center pb-1 z-20 pointer-events-none">
-            <span className="text-[10px] text-gray-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] font-medium tracking-wide">
+            <span className="text-xs text-gray-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)] font-medium tracking-wide">
                 {new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })} · {city}
             </span>
         </div>
@@ -1252,7 +1334,20 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
         )}
 
         {/* Middle Space (Empty, Model visible) */}
-        <div className="flex-1 relative" />
+        <div className="flex-1 relative flex items-center justify-center pointer-events-none">
+          <AnimatePresence>
+            {showFaceSwapHint && !isGenerating && !isFaceSwapping && !showActionSheet && !isFullscreen && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                className="bg-black/60 backdrop-blur-md text-white px-5 py-2.5 rounded-full shadow-[0_4px_15px_rgba(0,0,0,0.2)] text-sm font-medium tracking-wide border border-white/20 pointer-events-auto"
+              >
+                长按照片可给模特换脸
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
         {isGenerating && (
           <div className="absolute inset-0 bg-white/20 backdrop-blur-[2px] z-30 flex flex-col items-center justify-center gap-3 pointer-events-auto">
@@ -1302,7 +1397,19 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
                   >
                     <X className="w-4 h-4" />
                   </button>
-                  <h3 className="text-base font-bold text-primary mb-2 pr-6">{result.title}</h3>
+                  <h3 className="text-base font-bold text-primary mb-2 pr-6 flex items-start justify-between">
+                    <span>{result.title}</span>
+                    {result.score !== undefined && (
+                      <div className="flex items-baseline shrink-0 ml-4 drop-shadow-sm text-rose-500">
+                        <span className="text-4xl font-black italic">
+                          {result.score}
+                        </span>
+                        <span className="text-base font-bold ml-0.5 not-italic">
+                          分
+                        </span>
+                      </div>
+                    )}
+                  </h3>
                   <p className="text-sm text-[#555] leading-relaxed">{result.description}</p>
                 </motion.div>
               ) : (
@@ -1330,7 +1437,7 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
         )}
 
         {/* Floating Nav Buttons on the Right */}
-        <div className="absolute right-6 top-1/2 -translate-y-1/2 flex flex-col gap-5 z-20 pointer-events-none">
+        <div className="absolute right-6 bottom-[180px] flex flex-col gap-5 z-20 pointer-events-none">
           <div className="relative flex flex-col items-center pointer-events-auto">
             <AnimatePresence>
                 {plusOneAnim > 0 && (
@@ -1446,6 +1553,45 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
 // --- History Tab ---
 function HistoryTab({ history, onBack, onRemove }: { key?: string, history: HistoryOutfit[], onBack: () => void, onRemove: (id: string) => void }) {
   const [fullscreenIndex, setFullscreenIndex] = useState<number | null>(null);
+  const [isImmersive, setIsImmersive] = useState(false);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [initScrollDone, setInitScrollDone] = useState(false);
+
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handleTouchStart = (e: TouchEvent) => {
+      touchStartX.current = e.touches[0].clientX;
+      touchStartY.current = e.touches[0].clientY;
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (touchStartX.current !== null && touchStartY.current !== null) {
+        const touchEndX = e.changedTouches[0].clientX;
+        const touchEndY = e.changedTouches[0].clientY;
+        const deltaX = touchEndX - touchStartX.current;
+        const deltaY = touchEndY - touchStartY.current;
+
+        if (deltaX > 50 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) {
+          if (fullscreenIndex === null) {
+            onBack();
+          }
+        }
+        touchStartX.current = null;
+        touchStartY.current = null;
+      }
+    };
+
+    document.addEventListener('touchstart', handleTouchStart, { passive: true });
+    document.addEventListener('touchend', handleTouchEnd, { passive: true });
+
+    return () => {
+      document.removeEventListener('touchstart', handleTouchStart);
+      document.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [onBack, fullscreenIndex]);
 
   // Lock scroll when fullscreen
   useEffect(() => {
@@ -1456,6 +1602,8 @@ function HistoryTab({ history, onBack, onRemove }: { key?: string, history: Hist
     } else {
       document.body.style.overflow = '';
       if (mainEl) mainEl.style.overflow = '';
+      setIsImmersive(false); // Reset immersive when closing
+      setInitScrollDone(false); // Reset init flag so next time it opens, it snaps to correct spot
     }
     return () => {
       document.body.style.overflow = '';
@@ -1463,14 +1611,46 @@ function HistoryTab({ history, onBack, onRemove }: { key?: string, history: Hist
     };
   }, [fullscreenIndex]);
 
-  const dragHandlers = {
-    onDragEnd: (e: any, { offset, velocity }: any) => {
-      const swipe = offset.x;
-      if (swipe < -50 && fullscreenIndex !== null && fullscreenIndex < history.length - 1) {
-        setFullscreenIndex(fullscreenIndex + 1);
-      } else if (swipe > 50 && fullscreenIndex !== null && fullscreenIndex > 0) {
-        setFullscreenIndex(fullscreenIndex - 1);
-      }
+  // Initial scroll to the selected item MUST be instant
+  useEffect(() => {
+    if (fullscreenIndex !== null && scrollRef.current && !initScrollDone) {
+      const el = scrollRef.current;
+      
+      // Temporarily remove snapping classes to avoid the slow snap animation
+      el.classList.remove('snap-x', 'snap-mandatory');
+      el.style.scrollBehavior = 'auto';
+      
+      el.scrollLeft = fullscreenIndex * el.clientWidth;
+      
+      // Force repaint
+      void el.offsetHeight;
+      
+      // Restore snapping and smooth behavior for user interactions
+      el.classList.add('snap-x', 'snap-mandatory');
+      el.style.scrollBehavior = '';
+      
+      setInitScrollDone(true);
+    }
+  }, [fullscreenIndex, initScrollDone]);
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (!scrollRef.current || !initScrollDone) return;
+    const clientWidth = scrollRef.current.clientWidth;
+    const scrollLeft = scrollRef.current.scrollLeft;
+    const newIdx = Math.round(scrollLeft / clientWidth);
+    if (newIdx !== fullscreenIndex && newIdx >= 0 && newIdx < history.length) {
+      setFullscreenIndex(newIdx);
+    }
+  };
+
+  const handleArrowClick = (e: React.MouseEvent, direction: 'prev' | 'next') => {
+    e.stopPropagation();
+    if (!scrollRef.current || fullscreenIndex === null) return;
+    
+    const newIdx = direction === 'next' ? fullscreenIndex + 1 : fullscreenIndex - 1;
+    if (newIdx >= 0 && newIdx < history.length) {
+       setFullscreenIndex(newIdx); // State update
+       scrollRef.current.scrollTo({ left: newIdx * scrollRef.current.clientWidth, behavior: 'smooth' }); // Visual update
     }
   };
 
@@ -1488,53 +1668,99 @@ function HistoryTab({ history, onBack, onRemove }: { key?: string, history: Hist
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 bg-black flex flex-col"
+            drag="y"
+            dragConstraints={{ top: 0, bottom: 0 }}
+            dragElastic={1}
+            onDragEnd={(e, { offset }) => {
+              if (offset.y > 50) {
+                setFullscreenIndex(null);
+              }
+            }}
           >
-            <motion.img 
-              drag="x"
-              dragConstraints={{ left: 0, right: 0 }}
-              dragElastic={1}
-              {...dragHandlers}
-              key={fullscreenIndex}
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              transition={{ duration: 0.2 }}
-              src={history[fullscreenIndex].imageUrl} 
-              alt="History Outfit Fullscreen" 
-              className="absolute inset-0 w-full h-full object-cover cursor-pointer"
-              onClick={() => setFullscreenIndex(null)}
-            />
-
-            {/* Overlay Status (Date, Weather, Scenario) */}
-            <div className="absolute top-safe pt-6 left-0 right-0 z-50 pointer-events-none px-6 flex flex-col items-center gap-1.5 drop-shadow-[0_2px_4px_rgba(0,0,0,0.6)]">
-              <div className="text-white/90 text-[11px] font-medium tracking-wide flex items-center justify-center gap-2">
-                 <span>{new Date(history[fullscreenIndex].createdAt).toLocaleDateString()}</span>
-                 <span>·</span>
-                 <span>{history[fullscreenIndex].weather}</span>
-              </div>
-              <div className="text-white text-sm font-medium tracking-wide">
-                 {history[fullscreenIndex].scenario}
-              </div>
+            <div 
+              ref={scrollRef}
+              onScroll={handleScroll}
+              className="snap-slider flex w-full h-[100dvh] overflow-x-auto overflow-y-hidden snap-x snap-mandatory custom-scrollbar"
+              style={{ touchAction: 'pan-x', scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+            >
+              <style dangerouslySetInnerHTML={{__html: `.snap-slider::-webkit-scrollbar { display: none; }`}} />
+              
+              {history.map((item) => (
+                <div key={item.id} className="w-screen h-full shrink-0 snap-center relative pointer-events-auto">
+                  <img 
+                    src={item.imageUrl} 
+                    alt="History Outfit Fullscreen" 
+                    className="w-full h-full object-cover cursor-pointer"
+                    onClick={() => setIsImmersive(!isImmersive)}
+                    draggable={false}
+                  />
+                </div>
+              ))}
             </div>
 
+            {/* Header: Back Button & Status Overlay */}
+            <AnimatePresence>
+              {!isImmersive && (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute top-[calc(env(safe-area-inset-top,0px)+24px)] left-0 right-0 z-50 px-4 flex items-center justify-center pointer-events-none"
+                >
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setFullscreenIndex(null); }}
+                    className="absolute left-4 w-10 h-10 flex items-center justify-center rounded-full bg-black/20 backdrop-blur-md text-white/90 hover:bg-black/40 transition-colors pointer-events-auto"
+                  >
+                    <ChevronLeft className="w-6 h-6 mr-0.5" />
+                  </button>
+
+                  <div className="flex flex-col items-center justify-center gap-0.5 bg-black/20 backdrop-blur-md px-5 py-1.5 rounded-2xl relative mt-2">
+                    {history[fullscreenIndex].score !== undefined && (
+                      <div className="absolute -top-3 -right-3 bg-accent text-white text-[13px] font-black italic rounded-full h-8 w-8 flex items-center justify-center shadow-lg transform rotate-12 ring-2 ring-white/20 shadow-black/50">
+                        {history[fullscreenIndex].score}
+                      </div>
+                    )}
+                    <div className="text-white/90 text-[10px] font-medium tracking-widest flex items-center justify-center gap-1.5">
+                       <span>{new Date(history[fullscreenIndex].createdAt).toLocaleDateString().replace(/\//g, '-')}</span>
+                       <span>·</span>
+                       <span>{history[fullscreenIndex].weather}</span>
+                    </div>
+                    <div className="text-white text-[13px] font-medium tracking-wide">
+                       {history[fullscreenIndex].scenario}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {/* Navigation Arrows */}
-            {fullscreenIndex > 0 && (
-              <button 
-                onClick={(e) => { e.stopPropagation(); setFullscreenIndex(fullscreenIndex - 1); }}
-                className="absolute left-2 top-1/2 -translate-y-1/2 p-2 text-white/60 hover:text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)] transition-colors z-50"
+            <AnimatePresence>
+            {!isImmersive && fullscreenIndex > 0 && (
+              <motion.button 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={(e) => handleArrowClick(e, 'prev')}
+                className="absolute left-2 top-1/2 -translate-y-1/2 p-2 text-white/60 hover:text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)] transition-colors z-50 pointer-events-auto"
               >
                 <ChevronLeft className="w-10 h-10 stroke-[1.5]" />
-              </button>
+              </motion.button>
             )}
+            </AnimatePresence>
             
-            {fullscreenIndex < history.length - 1 && (
-              <button 
-                onClick={(e) => { e.stopPropagation(); setFullscreenIndex(fullscreenIndex + 1); }}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-white/60 hover:text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)] transition-colors z-50"
+            <AnimatePresence>
+            {!isImmersive && fullscreenIndex < history.length - 1 && (
+              <motion.button 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={(e) => handleArrowClick(e, 'next')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-white/60 hover:text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)] transition-colors z-50 pointer-events-auto"
               >
                 <ChevronRight className="w-10 h-10 stroke-[1.5]" />
-              </button>
+              </motion.button>
             )}
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>
