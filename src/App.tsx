@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, Plus, Shirt, Wand2, Trash2, X, RefreshCw, UploadCloud, ChevronRight, MessageCircle, ChevronLeft, Download, Share, RotateCcw, ChevronDown } from 'lucide-react';
+import { Camera, Plus, Shirt, Wand2, Trash2, X, RefreshCw, UploadCloud, ChevronRight, MessageCircle, ChevronLeft, Download, Share, RotateCcw, ChevronDown, Heart, Edit2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { get, set } from 'idb-keyval';
 import { Category, WardrobeItem, OutfitRecommendation, HistoryOutfit } from './types';
@@ -375,6 +375,23 @@ function AddTab({ onAdd, onCancel }: { key?: string, onAdd: (items: WardrobeItem
     }
   }, [error]);
 
+  const [isEditingCard, setIsEditingCard] = useState(false);
+  const editCardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (editCardRef.current && !editCardRef.current.contains(event.target as Node)) {
+        setIsEditingCard(false);
+      }
+    };
+    if (isEditingCard) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isEditingCard]);
+
   const [saveProgress, setSaveProgress] = useState<{current: number, total: number} | null>(null);
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -605,18 +622,70 @@ function AddTab({ onAdd, onCancel }: { key?: string, onAdd: (items: WardrobeItem
                 </button>
               </div>
 
-              <div className="bg-white p-4 rounded-[16px] border border-border-custom relative shadow-[0_10px_30px_rgba(0,0,0,0.03)] flex items-center gap-4">
+              <div 
+                ref={editCardRef}
+                onClick={() => !isEditingCard && setIsEditingCard(true)}
+                className={`bg-white p-4 rounded-[16px] border border-border-custom relative shadow-[0_10px_30px_rgba(0,0,0,0.03)] flex items-center gap-4 ${!isEditingCard ? 'cursor-pointer hover:border-black/20 transition-colors' : ''}`}
+              >
                 <div className="flex-1">
-                  <h3 className="text-lg font-medium text-primary mb-1">{parsedItem.name}</h3>
-                  <p className="text-sm text-[#999] mb-3">{parsedItem.category} / {parsedItem.color}</p>
-                  
-                  {parsedItem.styleTags.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {parsedItem.styleTags.map((tag, i) => (
-                        <span key={i} className="text-xs bg-accent-pale text-accent px-2 py-1 rounded-md">
-                          {tag}
-                        </span>
-                      ))}
+                  {!isEditingCard ? (
+                    <>
+                      <h3 className="text-lg font-medium text-primary mb-1">{parsedItem.name}</h3>
+                      <p className="text-sm text-[#999] mb-3">{parsedItem.category} / {parsedItem.color}</p>
+                      
+                      {parsedItem.styleTags.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {parsedItem.styleTags.map((tag, i) => (
+                            <span key={i} className="text-xs bg-accent-pale text-accent px-2 py-1 rounded-md">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      
+                      <div className="absolute top-4 right-4 text-xs text-[#999] flex items-center gap-1 opacity-60">
+                        <Edit2 className="w-3.5 h-3.5" /> 点击修改
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                       <input 
+                         type="text" 
+                         value={parsedItem.name} 
+                         onChange={e => setParsedItem({...parsedItem, name: e.target.value})}
+                         className="w-full text-lg font-medium text-primary border-b border-border-custom px-1 py-1 focus:outline-none focus:border-primary placeholder:text-[#999]"
+                         placeholder="单品名称"
+                         autoFocus
+                       />
+                       <div className="flex gap-2">
+                         <select 
+                           value={parsedItem.category}
+                           onChange={e => setParsedItem({...parsedItem, category: e.target.value as Category})}
+                           className="flex-1 text-sm bg-black/5 rounded-md px-2 py-1.5 focus:outline-none text-[#333]"
+                         >
+                           {['上装', '下装', '连衣裙', '鞋子', '包包', '配饰'].map(c => <option key={c} value={c}>{c}</option>)}
+                         </select>
+                         <input 
+                           type="text"
+                           value={parsedItem.color}
+                           onChange={e => setParsedItem({...parsedItem, color: e.target.value})}
+                           className="flex-1 text-sm bg-black/5 rounded-md px-2 py-1.5 focus:outline-none placeholder:text-[#999]"
+                           placeholder="颜色"
+                         />
+                       </div>
+                       <input 
+                         type="text"
+                         value={parsedItem.styleTags.join(' ')}
+                         onChange={e => setParsedItem({...parsedItem, styleTags: e.target.value.split(/\s+/).filter(Boolean)})}
+                         className="w-full text-xs bg-black/5 rounded-md px-2 py-2 focus:outline-none placeholder:text-[#999]"
+                         placeholder="风格标签（用空格分隔，如：甜美 复古）"
+                       />
+                       <button 
+                         onClick={(e) => { e.stopPropagation(); setIsEditingCard(false); }}
+                         className="self-end mt-1 text-xs bg-primary text-white px-5 py-2 rounded-full font-medium active:scale-95 transition-transform"
+                       >
+                         完成
+                       </button>
                     </div>
                   )}
                 </div>
@@ -639,7 +708,7 @@ function AddTab({ onAdd, onCancel }: { key?: string, onAdd: (items: WardrobeItem
 
 // --- Global State for Inspiration Tab to persist across tab navigation ---
 let globalInspirationSession: {
-  result: { title: string, description: string, itemIds: string[], score?: number } | null;
+  result: { title: string, description: string, itemIds: string[] } | null;
   tryOnImage: string | null;
   isSaved: boolean;
   showReason: boolean;
@@ -734,7 +803,7 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCanceled, setIsCanceled] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const [result, setResult] = useState<{ title: string, description: string, itemIds: string[], score?: number } | null>(globalInspirationSession?.result || null);
+  const [result, setResult] = useState<{ title: string, description: string, itemIds: string[] } | null>(globalInspirationSession?.result || null);
   const [error, setError] = useState<string | null>(null);
   const [showReason, setShowReason] = useState(globalInspirationSession?.showReason || false);
 
@@ -1012,8 +1081,7 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
         scenario,
         weather,
         createdAt: Date.now(),
-        itemIds: result?.itemIds || [],
-        score: result?.score
+        itemIds: result?.itemIds || []
     });
     
     // Trigger animation & toggle 
@@ -1399,16 +1467,6 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
                   </button>
                   <h3 className="text-base font-bold text-primary mb-2 pr-6 flex items-start justify-between">
                     <span>{result.title}</span>
-                    {result.score !== undefined && (
-                      <div className="flex items-baseline shrink-0 ml-4 drop-shadow-sm text-rose-500">
-                        <span className="text-4xl font-black italic">
-                          {result.score}
-                        </span>
-                        <span className="text-base font-bold ml-0.5 not-italic">
-                          分
-                        </span>
-                      </div>
-                    )}
                   </h3>
                   <p className="text-sm text-[#555] leading-relaxed">{result.description}</p>
                 </motion.div>
@@ -1437,7 +1495,7 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
         )}
 
         {/* Floating Nav Buttons on the Right */}
-        <div className="absolute right-6 bottom-[180px] flex flex-col gap-5 z-20 pointer-events-none">
+        <div className="absolute right-6 bottom-[240px] flex flex-col gap-5 z-20 pointer-events-none">
           <div className="relative flex flex-col items-center pointer-events-auto">
             <AnimatePresence>
                 {plusOneAnim > 0 && (
@@ -1458,9 +1516,9 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
               animate={plusOneAnim > 0 ? { scale: [1, 1.2, 1] } : {}}
               transition={{ duration: 0.4 }}
               className="w-12 h-12 bg-white/70 backdrop-blur-md shadow-[0_4px_20px_rgba(0,0,0,0.15)] rounded-full flex flex-col items-center justify-center text-primary hover:bg-white/90 transition-all hover:scale-105 disabled:opacity-50 border border-white/30" 
-              title="历史穿搭"
+              title="我的收藏"
             >
-              <Download className="w-[18px] h-[18px] stroke-[1.5] -mt-0.5" />
+              <Heart className="w-[18px] h-[18px] stroke-[1.5] -mt-0.5" />
               <span className="text-[9px] text-[#555] font-normal leading-none mt-1">{historyCount}</span>
             </motion.button>
           </div>
@@ -1487,9 +1545,9 @@ function InspirationTab({ wardrobe, history, onNavAdd, onNavWardrobe, onNavHisto
                   disabled={isSaved}
                   className={`w-14 h-14 backdrop-blur-[6px] border rounded-full flex items-center justify-center transition-all shadow-[0_4px_15px_rgba(0,0,0,0.08)] ${isSaved ? 'bg-black/10 border-white/20 text-[#888] cursor-not-allowed' : 'bg-white/30 border-white/50 text-[#222] hover:bg-white/50 hover:scale-105'}`}
                 >
-                  <Download className="w-6 h-6 stroke-[1.5]" />
+                  <Heart className={`w-6 h-6 stroke-[1.5] ${isSaved ? 'fill-current' : ''}`} />
                 </button>
-                <span className={`text-[12px] font-medium drop-shadow-lg ${isSaved ? 'text-[#888]' : 'text-[#444]'}`}>{isSaved ? '已保存' : '保存'}</span>
+                <span className={`text-[12px] font-medium drop-shadow-lg ${isSaved ? 'text-[#888]' : 'text-[#444]'}`}>{isSaved ? '已收藏' : '收藏'}</span>
               </div>
               <div className="flex flex-col items-center gap-1.5">
                 <button 
@@ -1715,11 +1773,6 @@ function HistoryTab({ history, onBack, onRemove }: { key?: string, history: Hist
                   </button>
 
                   <div className="flex flex-col items-center justify-center gap-0.5 bg-black/20 backdrop-blur-md px-5 py-1.5 rounded-2xl relative mt-2">
-                    {history[fullscreenIndex].score !== undefined && (
-                      <div className="absolute -top-3 -right-3 bg-accent text-white text-[13px] font-black italic rounded-full h-8 w-8 flex items-center justify-center shadow-lg transform rotate-12 ring-2 ring-white/20 shadow-black/50">
-                        {history[fullscreenIndex].score}
-                      </div>
-                    )}
                     <div className="text-white/90 text-[10px] font-medium tracking-widest flex items-center justify-center gap-1.5">
                        <span>{new Date(history[fullscreenIndex].createdAt).toLocaleDateString().replace(/\//g, '-')}</span>
                        <span>·</span>
@@ -1769,7 +1822,7 @@ function HistoryTab({ history, onBack, onRemove }: { key?: string, history: Hist
         <button onClick={onBack} className="text-[#999] hover:text-primary p-1.5 -ml-1.5 rounded-full hover:bg-black/5 transition-colors shrink-0">
           <ChevronLeft className="w-5 h-5"/>
         </button>
-        <h2 className="text-lg font-normal tracking-tight text-primary">历史穿搭</h2>
+        <h2 className="text-lg font-normal tracking-tight text-primary">我的收藏</h2>
         <div className="w-8 shrink-0" /> {/* Spacer */}
       </div>
 
@@ -1777,9 +1830,9 @@ function HistoryTab({ history, onBack, onRemove }: { key?: string, history: Hist
         {history.length === 0 ? (
             <div className="pt-20 flex flex-col items-center justify-center text-center px-6">
               <div className="w-24 h-24 bg-accent-light rounded-full flex items-center justify-center mb-4">
-                <Download className="w-10 h-10 text-[#999]" />
+                <Heart className="w-10 h-10 text-[#999]" />
               </div>
-              <p className="text-sm text-[#999]">暂无历史保存穿搭<br/><span className="text-xs text-[#bbb] mt-1 block">在灵感界面点击保存即可收集</span></p>
+              <p className="text-sm text-[#999]">暂无收藏穿搭<br/><span className="text-xs text-[#bbb] mt-1 block">在灵感界面点击收藏即可收集</span></p>
             </div>
         ) : (
             <div className="grid grid-cols-2 gap-3 pb-safe">

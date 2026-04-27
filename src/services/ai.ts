@@ -162,10 +162,12 @@ export async function analyzeSingleClothingItem(base64DataUrl: string): Promise<
 
     const response = await ai.models.generateContent({
       model: MODEL_NAME,
-      contents: [
-        { text: prompt },
-        { inlineData: { mimeType, data: base64Data } }
-      ],
+      contents: {
+        parts: [
+          { text: prompt },
+          { inlineData: { mimeType, data: base64Data } }
+        ]
+      },
       config: {
         responseMimeType: "application/json",
       }
@@ -196,7 +198,7 @@ export async function generateOutfit(
   scenario: string, 
   weather: string,
   recentlyWornItemIds: string[] = []
-): Promise<{ title: string, description: string, itemIds: string[], score?: number }> {
+): Promise<{ title: string, description: string, itemIds: string[] }> {
   try {
     if (wardrobe.length === 0) {
       throw new Error("你的衣柜还是空的哦");
@@ -231,8 +233,7 @@ export async function generateOutfit(
     返回的JSON必须严格遵循以下结构：
     {
       "title": "搭配的主题名称（如：春日出游甜美风）",
-      "description": "搭配思路（为什么这么搭，以及一些穿着建议。并在最后加上给出评分的依据。请保持非常简短，总字数绝对不要超过100字！！！语气请务必幽默搞笑）",
-      "score": 95, // 穿搭打分，满分100分。综合考虑衣服和场景、天气的匹配程度，以及整体造型的美感。
+      "description": "搭配思路（为什么这么搭，以及一些穿着建议。请保持非常简短，总字数绝对不要超过100字！！！语气请务必幽默搞笑）",
       "itemIds": ["id1", "id2"] // 被选中单品的 id 数组
     }
     `;
@@ -252,7 +253,6 @@ export async function generateOutfit(
     return {
       title: result.title || '推荐穿搭',
       description: result.description || '这是为你推荐的搭配。',
-      score: result.score,
       itemIds: Array.isArray(result.itemIds) ? result.itemIds : []
     };
   } catch (error: any) {
